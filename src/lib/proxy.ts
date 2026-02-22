@@ -69,10 +69,12 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
         }
         
         const upgraded = srv.upgrade(req, {
-          data: { projectName, targetPort: state.port } as WebSocketData,
+          data: { projectName, targetPort: state.port, connected: false } as WebSocketData,
         });
         
-        return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 500 });
+        return upgraded 
+          ? new Response(null, { status: 101 }) 
+          : new Response("WebSocket upgrade failed", { status: 500 });
       }
       
       const state = getProjectState(projectName);
