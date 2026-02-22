@@ -39,7 +39,17 @@ async function proxyRequest(
     redirect: "manual",
   });
   
-  return fetch(proxyReq);
+  const response = await fetch(proxyReq);
+  
+  const headers = new Headers(response.headers);
+  headers.delete("Content-Encoding");
+  headers.delete("Content-Length");
+  
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
