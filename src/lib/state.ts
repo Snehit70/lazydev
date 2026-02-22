@@ -1,0 +1,128 @@
+import { Database } from "bun:sqlite";
+import { join } from "path";
+import type { ProjectState, DaemonState } from "./types";
+
+const STATE_DIR = process.env.LAZYDEV_STATE_DIR ?? join(process.env.HOME!, ".local/share/lazydev");
+const DB_PATH = join(STATE_DIR, "state.db");
+
+let db: Database | null = null;
+
+function getDb(): Database {
+  if (!db) {
+    const { mkdirSync } = require("fs");
+    mkdirSync(STATE_DIR, { recursive: true });
+    db = new Database(DB_PATH);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS projects (
+        name TEXT PRIMARY KEY,
+        port INTEGER,
+        pid INTEGER,
+        status TEXT,
+        last_activity INTEGER,
+        started_at INTEGER,
+        websocket_connections INTEGER DEFAULT 0
+      )
+    `);
+  }
+  return db;
+}
+
+export function loadState(): DaemonState {
+  const database = getDb();
+  const rows = database.query("SELECT * FROM projects").all() as any[];
+  
+  const projects: Record<string, ProjectState> = {};
+  for (const row of rows) {
+    projects[row.name] = {
+      name: row.name,
+      port: row.port,
+      pid: row.pid,
+      status: row.status,
+      last_activity: row.last_activity,
+      started_at: row.started_at,
+      websocket_connections: row.websocket_connections ?? 0,
+    };
+  }
+  
+  return {
+    started_at: Date.now(),
+    projects,
+  };
+}
+
+export function getProjectState(name: string): ProjectState | null {
+  const database = getDb();
+  const row = database.query("SELECT * FROM projects WHERE name = ?").get(name) as any;
+  
+  if (!row) return null;
+  
+  return {
+    name: row.name,
+    port: row.port,
+    pid: row.pid,
+    status: row.status,
+    last_activity: row.last_activity,
+    started_at: row.started_at,
+    websocket_connections: row.websocket_connections ?? 0,
+  };
+}
+
+export function setProjectState(name: string, state: Partial<ProjectState>): void {
+  const database = getDb();
+  
+  const existing = getProjectState(name);
+  
+  if (existing) {
+    const updates = { ...existing, ...state };
+    database.run(
+      `UPDATE projects SET port=?, pid=?, status=?, last_activity=?, started_at=?, websocket_connections=? WHERE name=?`,
+      [updates.port, updates.pid, updates.status, updates.last_activity, updates.started_at, updates.websocket_connections, name]
+    );
+  } else {
+    database.run(
+      `INSERT INTO projects (name, port, pid, status, last_activity, started_at, websocket_connections) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, state.port ?? null, state.pid ?? null, state.status ?? "stopped", state.last_activity ?? null, state.started_at ?? null, state.websocket_connections ?? 0]
+    );
+  }
+}
+
+export function updateActivity(name: string): void {
+  const database = getDb();
+  database.run(
+    `UPDATE projects SET last_activity = ? WHERE name = ?`,
+    [Date.now(), name]
+  );
+}
+
+export function incrementWebSockets(name: string): void {
+  const database = getDb();
+  database.run(
+    `UPDATE projects SET websocket_connections = websocket_connections + 1, last_activity = ? WHERE name = ?`,
+    [Date.now(), name]
+  );
+}
+
+export function decrementWebSockets(name: string): void {
+  const database = getDb();
+  database.run(
+    `UPDATE projects SET websocket_connections = MAX(0, websocket_connections - 1), last_activity = ? WHERE name = ?`,
+    [Date.now(), name]
+  );
+}
+
+export function deleteProjectState(name: string): void {
+  const database = getDb();
+  database.run("DELETE FROM projects WHERE name = ?", [name]);
+}
+
+export function getAllStates(): Record<string, ProjectState> {
+  const state = loadState();
+  return state.projects;
+}
+
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
