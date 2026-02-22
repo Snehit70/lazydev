@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
+import { homedir } from "os";
 import { join, basename } from "path";
 import { parse, stringify } from "yaml";
 import type { Config } from "../lib/types";
 
-const CONFIG_PATH = join(process.env["HOME"]!, ".config/lazydev/config.yaml");
+const HOME = homedir();
+const CONFIG_PATH = join(HOME, ".config/lazydev/config.yaml");
 
 function detectStartCmd(cwd: string): string {
   const pkgPath = join(cwd, "package.json");
@@ -40,7 +42,7 @@ export async function run(path?: string) {
     process.exit(1);
   }
   
-  const cwd = path.replace("~", process.env["HOME"]!);
+  const cwd = path.replace("~", HOME);
   
   if (!existsSync(cwd)) {
     console.error(`Directory not found: ${cwd}`);

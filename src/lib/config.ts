@@ -1,5 +1,6 @@
 import { parse } from "yaml";
 import { readFileSync, existsSync } from "fs";
+import { homedir } from "os";
 import type { Config, Settings, ProjectConfig } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
@@ -7,7 +8,7 @@ const CONFIG_PATH = "~/.config/lazydev/config.yaml";
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
-    return path.replace("~", process.env["HOME"] ?? "/home");
+    return path.replace("~", homedir());
   }
   return path;
 }
@@ -68,11 +69,18 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
   const projects: Record<string, ProjectConfig> = {};
   
   for (const [name, project] of Object.entries(parsed.projects ?? {})) {
+    if (!project.cwd) {
+      throw new Error(`Project "${name}" missing cwd field`);
+    }
+    if (!project.start_cmd) {
+      throw new Error(`Project "${name}" missing start_cmd field`);
+    }
+    
     projects[name] = {
       name,
-      cwd: expandTilde(project.cwd ?? ""),
-      start_cmd: project.start_cmd ?? "",
-      idle_timeout: project.idle_timeout ? parseDuration(project.idle_timeout) : settings.idle_timeout,
+      cwd: expandTilde(project.cwd),
+      start_cmd: project.start_cmd,
+      idle_timeout: project.idle_timeout !== undefined ? parseDuration(project.idle_timeout) : settings.idle_timeout,
       ...(project.disabled !== undefined && { disabled: project.disabled }),
       ...(project.aliases !== undefined && { aliases: project.aliases }),
     };

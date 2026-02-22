@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { parse, stringify } from "yaml";
 import type { Config } from "../lib/types";
 
-const CONFIG_PATH = join(process.env["HOME"]!, ".config/lazydev/config.yaml");
+const CONFIG_PATH = join(homedir(), ".config/lazydev/config.yaml");
 
 export async function run(name?: string) {
   if (!name) {

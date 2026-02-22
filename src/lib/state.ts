@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import type { ProjectState, DaemonState, ProjectMetrics } from "./types";
 
-const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(process.env["HOME"]!, ".local/share/lazydev");
+const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(homedir(), ".local/share/lazydev");
 const DB_PATH = join(STATE_DIR, "state.db");
 
 let db: Database | null = null;

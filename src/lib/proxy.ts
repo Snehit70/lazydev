@@ -8,6 +8,7 @@ interface WebSocketData {
   projectName: string;
   targetPort: number;
   targetWs?: WebSocket;
+  connected: boolean;
 }
 
 let server: Server<WebSocketData> | null = null;
@@ -98,11 +99,10 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
     },
     
     websocket: {
-      data: {} as WebSocketData,
+      data: { projectName: "", targetPort: 0, connected: false } as WebSocketData,
       
       open(ws) {
         const { targetPort, projectName } = ws.data;
-        incrementWebSockets(projectName);
         
         try {
           const url = `ws://localhost:${targetPort}`;
@@ -110,10 +110,12 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           
           targetWs.onopen = () => {
             ws.data.targetWs = targetWs;
+            ws.data.connected = true;
+            incrementWebSockets(projectName);
           };
           
           targetWs.onmessage = (e) => {
-            ws.send(e.data as string);
+            ws.send(e.data);
           };
           
           targetWs.onclose = () => {
@@ -129,12 +131,14 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       },
       
       message(ws, message) {
-        ws.data.targetWs?.send(message as string);
+        ws.data.targetWs?.send(message);
       },
       
       close(ws) {
-        const { projectName, targetWs } = ws.data;
-        decrementWebSockets(projectName);
+        const { projectName, targetWs, connected } = ws.data;
+        if (connected) {
+          decrementWebSockets(projectName);
+        }
         targetWs?.close();
       },
     },

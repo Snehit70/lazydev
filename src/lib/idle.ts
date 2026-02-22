@@ -79,8 +79,12 @@ export function startIdleWatcher(settings: Settings): void {
       
       if (!state.last_activity) continue;
       
+      if (projectConfig?.idle_timeout === 0) continue;
+      
       const idleTime = now - state.last_activity;
-      const timeout = projectConfig?.idle_timeout ?? calculateDynamicTimeout(state, settings);
+      const timeout = projectConfig?.idle_timeout !== undefined 
+        ? projectConfig.idle_timeout 
+        : calculateDynamicTimeout(state, settings);
       
       if (idleTime >= timeout) {
         const metrics = getProjectMetrics(name);
