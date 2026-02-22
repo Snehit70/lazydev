@@ -73,6 +73,10 @@ export async function run(path?: string) {
   
   const config = parse(configContent) as Config;
   
+  if (!config.projects) {
+    config.projects = {};
+  }
+  
   if (config.projects[name]) {
     console.error(`Project "${name}" already exists. Use 'lazydev remove ${name}' first.`);
     process.exit(1);
