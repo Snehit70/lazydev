@@ -1,7 +1,7 @@
 import { serve, type Server } from "bun";
 import type { Config, ProjectConfig } from "./types";
 import { getProjectState, updateActivity, incrementWebSockets, decrementWebSockets } from "./state";
-import { startProject, stopProject, waitForHealthy, checkHealth } from "./process";
+import { startProject, checkHealth } from "./process";
 import { markPortUsed } from "./port";
 
 interface WebSocketData {
@@ -32,24 +32,17 @@ async function proxyRequest(
   const url = new URL(req.url);
   url.port = String(targetPort);
   
+  const proxyHeaders = new Headers(req.headers);
+  proxyHeaders.delete("Accept-Encoding");
+  
   const proxyReq = new Request(url.toString(), {
     method: req.method,
-    headers: req.headers,
+    headers: proxyHeaders,
     body: req.body,
     redirect: "manual",
   });
   
-  const response = await fetch(proxyReq);
-  
-  const headers = new Headers(response.headers);
-  headers.delete("Content-Encoding");
-  headers.delete("Content-Length");
-  
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return fetch(proxyReq);
 }
 
 export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
@@ -58,6 +51,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
   server = serve({
     port: cfg.settings.proxy_port,
     hostname: "127.0.0.1",
+    idleTimeout: 255,
     
     async fetch(req, srv) {
       const host = req.headers.get("host") ?? "";
@@ -97,13 +91,6 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       }
       
       const { port } = await startProject(projectName, projectConfig, cfg.settings);
-      
-      const healthy = await waitForHealthy(port, cfg.settings);
-      
-      if (!healthy) {
-        await stopProject(projectName);
-        return new Response("Server failed to start", { status: 503 });
-      }
       
       markPortUsed(port);
       updateActivity(projectName);
