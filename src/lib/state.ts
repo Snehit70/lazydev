@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "fs";
 import { join } from "path";
 import type { ProjectState, DaemonState, ProjectMetrics } from "./types";
 
@@ -9,7 +10,6 @@ let db: Database | null = null;
 
 function getDb(): Database {
   if (!db) {
-    const { mkdirSync } = require("fs");
     mkdirSync(STATE_DIR, { recursive: true });
     db = new Database(DB_PATH);
     db.run(`

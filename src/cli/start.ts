@@ -1,6 +1,6 @@
 import { loadConfig } from "../lib/config";
 import { startProxy } from "../lib/proxy";
-import { startIdleWatcher } from "../lib/idle";
+import { startIdleWatcher, setConfigGetter } from "../lib/idle";
 
 export async function run(port?: number) {
   console.log("Starting LazyDev daemon...\n");
@@ -17,6 +17,7 @@ export async function run(port?: number) {
     console.log(`✓ Proxy listening on port ${config.settings.proxy_port}`);
     console.log(`  Access projects at: http://<project>.localhost`);
     
+    setConfigGetter(() => config.projects);
     startIdleWatcher(config.settings);
     console.log(`✓ Idle watcher started (timeout: ${config.settings.idle_timeout / 60000}m)`);
     
