@@ -1,4 +1,3 @@
-import { getProcessOutput } from "../lib/process";
 import { loadConfig } from "../lib/config";
 
 export async function run(name?: string) {

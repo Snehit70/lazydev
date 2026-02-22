@@ -1,7 +1,7 @@
-import { writeFileSync, mkdirSync, existsSync, appendFileSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 
-const CONFIG_DIR = join(process.env.HOME!, ".config/lazydev");
+const CONFIG_DIR = join(process.env["HOME"]!, ".config/lazydev");
 const CONFIG_PATH = join(CONFIG_DIR, "config.yaml");
 
 const DEFAULT_CONFIG = `# LazyDev Configuration
@@ -37,7 +37,7 @@ export async function run() {
     console.log("  Config file already exists:", CONFIG_PATH);
   }
   
-  const dataDir = join(process.env.HOME!, ".local/share/lazydev");
+  const dataDir = join(process.env["HOME"]!, ".local/share/lazydev");
   if (!existsSync(dataDir)) {
     mkdirSync(dataDir, { recursive: true });
     console.log("✓ Created data directory:", dataDir);

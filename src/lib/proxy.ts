@@ -1,33 +1,8 @@
-import { serve, Server } from "bun";
+import { serve, type Server } from "bun";
 import type { Config, ProjectConfig } from "./types";
-import { loadState, setProjectState, getProjectState, updateActivity, incrementWebSockets, decrementWebSockets } from "./state";
+import { getProjectState, updateActivity, incrementWebSockets, decrementWebSockets } from "./state";
 import { startProject, stopProject, waitForHealthy, checkHealth } from "./process";
 import { markPortUsed } from "./port";
-import { readFileSync } from "fs";
-import { join } from "path";
-
-const LOADING_PAGE = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="2">
-  <title>Starting {{project}}...</title>
-  <style>
-    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0f0f1a; color: #eee; }
-    .spinner { width: 40px; height: 40px; border: 3px solid #333; border-top-color: #7c3aed; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .container { text-align: center; }
-    p { color: #888; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="spinner"></div>
-    <h2>Starting {{project}}...</h2>
-    <p>Usually takes 5-15 seconds</p>
-  </div>
-</body>
-</html>`;
 
 interface WebSocketData {
   projectName: string;
@@ -35,12 +10,10 @@ interface WebSocketData {
   targetWs?: WebSocket;
 }
 
-let server: Server | null = null;
-let config: Config | null = null;
+let server: Server<WebSocketData> | null = null;
 const nameToConfig = new Map<string, ProjectConfig>();
 
 export function setConfig(cfg: Config): void {
-  config = cfg;
   nameToConfig.clear();
   
   for (const [name, project] of Object.entries(cfg.projects)) {
@@ -49,10 +22,6 @@ export function setConfig(cfg: Config): void {
       nameToConfig.set(alias.toLowerCase(), project);
     }
   }
-}
-
-function getLoadingPage(projectName: string): string {
-  return LOADING_PAGE.replace(/\{\{project\}\}/g, projectName);
 }
 
 async function proxyRequest(
@@ -72,7 +41,7 @@ async function proxyRequest(
   return fetch(proxyReq);
 }
 
-export async function startProxy(cfg: Config): Promise<Server> {
+export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
   setConfig(cfg);
   
   server = serve({
@@ -80,8 +49,9 @@ export async function startProxy(cfg: Config): Promise<Server> {
     hostname: "127.0.0.1",
     
     async fetch(req, srv) {
-      const host = req.headers.get("host") || "";
-      const subdomain = host.split(".localhost")[0].toLowerCase();
+      const host = req.headers.get("host") ?? "";
+      const subdomainRaw = host.split(".localhost")[0];
+      const subdomain = subdomainRaw?.toLowerCase() ?? "";
       
       if (!subdomain || !nameToConfig.has(subdomain)) {
         return new Response("Project not found", { status: 404 });
@@ -113,7 +83,7 @@ export async function startProxy(cfg: Config): Promise<Server> {
         }
       }
       
-      const port = await startProject(projectName, projectConfig, cfg.settings);
+      const { port } = await startProject(projectName, projectConfig, cfg.settings);
       
       const healthy = await waitForHealthy(port, cfg.settings);
       
@@ -180,6 +150,6 @@ export function stopProxy(): void {
   }
 }
 
-export function getServer(): Server | null {
+export function getServer(): Server<WebSocketData> | null {
   return server;
 }

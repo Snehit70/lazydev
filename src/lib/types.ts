@@ -13,6 +13,9 @@ export interface Settings {
   startup_timeout: number;
   port_range: [number, number];
   scan_interval: number;
+  dynamic_timeout: boolean;
+  min_timeout: number;
+  max_timeout: number;
 }
 
 export interface Config {
@@ -30,6 +33,12 @@ export interface ProjectState {
   websocket_connections: number;
 }
 
+export interface ProjectMetrics {
+  name: string;
+  cold_start_time: number | null;
+  request_history: number[];
+}
+
 export interface DaemonState {
   started_at: number;
   projects: Record<string, ProjectState>;
@@ -41,4 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   startup_timeout: 30000,
   port_range: [4000, 4999],
   scan_interval: 30000,
+  dynamic_timeout: true,
+  min_timeout: 120000,
+  max_timeout: 1800000,
 };

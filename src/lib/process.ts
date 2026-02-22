@@ -1,9 +1,7 @@
-import { spawn, Subprocess } from "bun";
-import { $ } from "bun";
-import type { ProjectConfig } from "./types";
-import { setProjectState, getProjectState } from "./state";
+import { spawn, type Subprocess } from "bun";
+import type { ProjectConfig, Settings } from "./types";
+import { setProjectState, getProjectState, setColdStartTime } from "./state";
 import { findAvailablePort, releasePort } from "./port";
-import type { Settings } from "./types";
 
 const processes = new Map<string, Subprocess>();
 
@@ -11,11 +9,11 @@ export async function startProject(
   name: string,
   config: ProjectConfig,
   settings: Settings
-): Promise<number> {
+): Promise<{ port: number; coldStartTime: number }> {
   const currentState = getProjectState(name);
   
   if (currentState?.status === "running" && currentState.pid) {
-    return currentState.port!;
+    return { port: currentState.port!, coldStartTime: 0 };
   }
   
   const port = await findAvailablePort(settings);
@@ -32,6 +30,8 @@ export async function startProject(
     HOST: "localhost",
   };
   
+  const startTime = Date.now();
+  
   const proc = spawn({
     cmd: ["sh", "-c", config.start_cmd],
     cwd: config.cwd,
@@ -42,15 +42,32 @@ export async function startProject(
   
   processes.set(name, proc);
   
-  setProjectState(name, {
-    status: "running",
-    pid: proc.pid,
-    port,
-    last_activity: Date.now(),
-    started_at: Date.now(),
-  });
+  const healthy = await waitForHealthy(port, settings);
   
-  return port;
+  const coldStartTime = Date.now() - startTime;
+  
+  if (healthy) {
+    setColdStartTime(name, coldStartTime);
+    
+    setProjectState(name, {
+      status: "running",
+      pid: proc.pid,
+      port,
+      last_activity: Date.now(),
+      started_at: Date.now(),
+    });
+  } else {
+    processes.delete(name);
+    releasePort(port);
+    setProjectState(name, {
+      status: "stopped",
+      pid: null,
+      port: null,
+    });
+    throw new Error(`Server failed to start within ${settings.startup_timeout}ms`);
+  }
+  
+  return { port, coldStartTime };
 }
 
 export async function stopProject(name: string): Promise<void> {

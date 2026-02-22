@@ -12,7 +12,7 @@ export async function run(port?: number) {
       config.settings.proxy_port = port;
     }
     
-    const server = await startProxy(config);
+    await startProxy(config);
     
     console.log(`✓ Proxy listening on port ${config.settings.proxy_port}`);
     console.log(`  Access projects at: http://<project>.localhost`);

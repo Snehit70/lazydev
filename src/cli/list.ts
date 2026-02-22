@@ -3,7 +3,7 @@ import { join } from "path";
 import { parse } from "yaml";
 import type { Config } from "../lib/types";
 
-const CONFIG_PATH = join(process.env.HOME!, ".config/lazydev/config.yaml");
+const CONFIG_PATH = join(process.env["HOME"]!, ".config/lazydev/config.yaml");
 
 export async function run(json: boolean = false) {
   if (!existsSync(CONFIG_PATH)) {
@@ -30,7 +30,7 @@ export async function run(json: boolean = false) {
   console.log("  ─────────────────────────────────────────────────────────");
   
   for (const [name, project] of projects) {
-    const dir = project.cwd.replace(process.env.HOME!, "~");
+    const dir = project.cwd.replace(process.env["HOME"]!, "~");
     console.log(`  ${name.padEnd(17)} ${dir.padEnd(28)} ${project.start_cmd}`);
   }
   

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { join } from "path";
-import type { ProjectState, DaemonState } from "./types";
+import type { ProjectState, DaemonState, ProjectMetrics } from "./types";
 
-const STATE_DIR = process.env.LAZYDEV_STATE_DIR ?? join(process.env.HOME!, ".local/share/lazydev");
+const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(process.env["HOME"]!, ".local/share/lazydev");
 const DB_PATH = join(STATE_DIR, "state.db");
 
 let db: Database | null = null;
@@ -21,6 +21,13 @@ function getDb(): Database {
         last_activity INTEGER,
         started_at INTEGER,
         websocket_connections INTEGER DEFAULT 0
+      )
+    `);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS metrics (
+        name TEXT PRIMARY KEY,
+        cold_start_time INTEGER,
+        request_history TEXT
       )
     `);
   }
@@ -88,10 +95,13 @@ export function setProjectState(name: string, state: Partial<ProjectState>): voi
 
 export function updateActivity(name: string): void {
   const database = getDb();
+  const now = Date.now();
   database.run(
     `UPDATE projects SET last_activity = ? WHERE name = ?`,
-    [Date.now(), name]
+    [now, name]
   );
+  
+  addRequestToHistory(name, now);
 }
 
 export function incrementWebSockets(name: string): void {
@@ -113,11 +123,69 @@ export function decrementWebSockets(name: string): void {
 export function deleteProjectState(name: string): void {
   const database = getDb();
   database.run("DELETE FROM projects WHERE name = ?", [name]);
+  database.run("DELETE FROM metrics WHERE name = ?", [name]);
 }
 
 export function getAllStates(): Record<string, ProjectState> {
   const state = loadState();
   return state.projects;
+}
+
+// Metrics functions
+
+export function getProjectMetrics(name: string): ProjectMetrics {
+  const database = getDb();
+  const row = database.query("SELECT * FROM metrics WHERE name = ?").get(name) as any;
+  
+  if (!row) {
+    return {
+      name,
+      cold_start_time: null,
+      request_history: [],
+    };
+  }
+  
+  return {
+    name: row.name,
+    cold_start_time: row.cold_start_time,
+    request_history: row.request_history ? JSON.parse(row.request_history) : [],
+  };
+}
+
+export function setColdStartTime(name: string, time: number): void {
+  const database = getDb();
+  const existing = database.query("SELECT * FROM metrics WHERE name = ?").get(name);
+  
+  if (existing) {
+    database.run(
+      `UPDATE metrics SET cold_start_time = ? WHERE name = ?`,
+      [time, name]
+    );
+  } else {
+    database.run(
+      `INSERT INTO metrics (name, cold_start_time, request_history) VALUES (?, ?, ?)`,
+      [name, time, "[]"]
+    );
+  }
+}
+
+export function addRequestToHistory(name: string, timestamp: number): void {
+  const database = getDb();
+  const metrics = getProjectMetrics(name);
+  
+  const history = [...metrics.request_history, timestamp].slice(-20);
+  
+  if (metrics.cold_start_time !== null) {
+    database.run(
+      `UPDATE metrics SET request_history = ? WHERE name = ?`,
+      [JSON.stringify(history), name]
+    );
+  } else {
+    database.run(
+      `INSERT OR REPLACE INTO metrics (name, cold_start_time, request_history) VALUES (?, ?, ?)`,
+      [name, metrics.cold_start_time, JSON.stringify(history)]
+    );
+  }
 }
 
 export function closeDb(): void {
