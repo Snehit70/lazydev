@@ -94,21 +94,36 @@ export async function startProject(
   });
   console.log(`[Process] State changed: ${name} → starting (port: ${port})`);
   
+  // Expand bun/node to full path (systemd doesn't have user PATH)
+  let startCmd = config.start_cmd;
+  if (startCmd.startsWith("bun ")) {
+    startCmd = `${process.execPath} ${startCmd.slice(4)}`;
+    console.log(`[Process] Expanded 'bun' → '${process.execPath}'`);
+  }
+  
+  // Environment variables for frameworks
   const env = {
     ...process.env,
     PORT: String(port),
-    HOST: "localhost",
+    HOST: "0.0.0.0", // Listen on all interfaces (required for proxy to work)
+    // Nuxt-specific
+    NUXT_HOST: "0.0.0.0",
+    NUXT_PORT: String(port),
+    // Next.js-specific  
+    NEXT_PUBLIC_PORT: String(port),
+    // General
+    SERVER_PORT: String(port),
   };
   
   console.log(`[Process] Spawning process:`);
   console.log(`[Process]   cwd: ${config.cwd}`);
-  console.log(`[Process]   cmd: ${config.start_cmd}`);
-  console.log(`[Process]   env: PORT=${port}, HOST=localhost`);
+  console.log(`[Process]   cmd: ${startCmd}`);
+  console.log(`[Process]   env: PORT=${port}, HOST=0.0.0.0`);
   
   const startTime = Date.now();
   
   const proc = spawn({
-    cmd: ["sh", "-c", config.start_cmd],
+    cmd: ["sh", "-c", startCmd],
     cwd: config.cwd,
     env,
     stdout: "pipe",

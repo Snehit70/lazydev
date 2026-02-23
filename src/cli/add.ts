@@ -13,33 +13,58 @@ import { expandTilde } from "../lib/config";
 const HOME = homedir();
 const CONFIG_PATH = join(HOME, ".config/lazydev/config.yaml");
 
-function detectStartCmd(cwd: string): string {
-  const pkgPath = join(cwd, "package.json");
+interface DetectedFramework {
+  name: string;
+  detected: boolean;
+  warnings: string[];
+}
+
+interface PackageJson {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
+}
+
+function detectFramework(pkg: PackageJson | null): DetectedFramework {
+  const result: DetectedFramework = { name: "unknown", detected: false, warnings: [] };
   
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      if (pkg.scripts?.dev) return "bun dev";
-      if (pkg.scripts?.start) return "bun start";
-    } catch {}
+  if (!pkg?.dependencies && !pkg?.devDependencies) {
+    return result;
   }
   
-  if (existsSync(join(cwd, "bunfig.toml"))) {
-    return "bun dev";
+  const deps: Record<string, string> = {};
+  if (pkg?.dependencies) Object.assign(deps, pkg.dependencies);
+  if (pkg?.devDependencies) Object.assign(deps, pkg.devDependencies);
+  
+  if ("nuxt" in deps || "nuxt-edge" in deps) {
+    result.name = "nuxt";
+    result.detected = true;
+    result.warnings.push("Nuxt detected: LazyDev sets NUXT_HOST=0.0.0.0 and NUXT_PORT automatically");
+  } else if ("next" in deps) {
+    result.name = "next";
+    result.detected = true;
+    result.warnings.push("Next.js detected: LazyDev sets HOST=0.0.0.0 and PORT automatically");
+  } else if ("vite" in deps || "@vitejs/plugin-vue" in deps || "@vitejs/plugin-react" in deps) {
+    result.name = "vite";
+    result.detected = true;
+    result.warnings.push("Vite detected: LazyDev sets HOST=0.0.0.0 and PORT automatically");
+  } else if ("@angular/core" in deps) {
+    result.name = "angular";
+    result.detected = true;
+    result.warnings.push("Angular detected: LazyDev sets HOST=0.0.0.0 and PORT automatically");
+  } else if ("svelte" in deps || "@sveltejs/kit" in deps) {
+    result.name = "svelte";
+    result.detected = true;
+    result.warnings.push("Svelte detected: LazyDev sets HOST=0.0.0.0 and PORT automatically");
   }
   
-  // Check for other common project types
-  if (existsSync(join(cwd, "Cargo.toml"))) {
-    return "cargo run";
-  }
-  
-  if (existsSync(join(cwd, "go.mod"))) {
-    return "go run .";
-  }
-  
-  if (existsSync(join(cwd, "requirements.txt")) || existsSync(join(cwd, "pyproject.toml"))) {
-    // Generic Python - user should override with --cmd if needed
-    return "python main.py";
+  return result;
+}
+
+function detectStartCmd(pkg: PackageJson | null): string {
+  if (pkg?.scripts) {
+    if ("dev" in pkg.scripts) return "bun dev";
+    if ("start" in pkg.scripts) return "bun start";
   }
   
   return "bun dev";
@@ -84,9 +109,20 @@ export async function run(path?: string, options: AddOptions = {}) {
     process.exit(1);
   }
   
+  // Detect framework and package.json
+  const pkgPath = join(cwd, "package.json");
+  let pkg: PackageJson | null = null;
+  if (existsSync(pkgPath)) {
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as PackageJson;
+    } catch {}
+  }
+  
+  const framework = detectFramework(pkg);
+  
   // Use provided name or derive from directory
   const derivedName = basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
-  const defaultName = derivedName || "project"; // Fallback if directory name is all non-alphanumeric
+  const defaultName = derivedName || "project";
   const name = options.name ?? defaultName;
   
   const validationError = validateName(name);
@@ -96,12 +132,12 @@ export async function run(path?: string, options: AddOptions = {}) {
   }
   
   // Use provided command or auto-detect
-  const startCmd = options.cmd ?? detectStartCmd(cwd);
+  const startCmd = options.cmd ?? detectStartCmd(pkg);
   
-  // Use provided timeout or default; treat empty string as "not provided"
+  // Use provided timeout or default
   const idleTimeout = options.timeout || "10m";
   
-  // Validate timeout format (unit required to avoid confusion)
+  // Validate timeout format
   if (!/^\d+(ms|s|m|h)$/.test(idleTimeout)) {
     console.error(`Invalid timeout format: "${idleTimeout}". Use format like "10m", "30s", "1h"`);
     process.exit(1);
@@ -126,7 +162,7 @@ export async function run(path?: string, options: AddOptions = {}) {
     name,
     cwd,
     start_cmd: startCmd,
-    idle_timeout: idleTimeout, // String like "10m", parsed by loadConfig()
+    idle_timeout: idleTimeout,
   };
   
   writeFileSync(CONFIG_PATH, stringify(config));
@@ -136,4 +172,14 @@ export async function run(path?: string, options: AddOptions = {}) {
   console.log(`  Command:   ${startCmd}`);
   console.log(`  Timeout:   ${idleTimeout}`);
   console.log(`  URL:       http://${name}.localhost`);
+  
+  if (framework.detected) {
+    console.log(`  Framework: ${framework.name}`);
+    for (const warning of framework.warnings) {
+      console.log(`    ℹ ${warning}`);
+    }
+  }
+  
+  console.log("");
+  console.log("Note: 'bun' in commands is auto-expanded to full path when spawned.");
 }
