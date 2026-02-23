@@ -1,9 +1,53 @@
 import { spawn, type Subprocess } from "bun";
 import type { ProjectConfig, Settings } from "./types";
-import { setProjectState, getProjectState, setColdStartTime } from "./state";
-import { findAvailablePort, releasePort } from "./port";
+import { setProjectState, getProjectState, setColdStartTime, getAllStates, addLogEntry } from "./state";
+import { findAvailablePort, releasePort, markPortUsed } from "./port";
 
 const processes = new Map<string, Subprocess>();
+const orphanPids = new Map<string, number>(); // Track PIDs of adopted orphan processes
+
+/**
+ * Start piping process output to the log database.
+ */
+function pipeOutputToLogs(name: string, proc: Subprocess): void {
+  const pipeStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
+    if (!stream) return;
+    
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process complete lines
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            addLogEntry(name, streamName, line);
+          }
+        }
+      }
+      
+      // Flush remaining buffer
+      if (buffer.trim()) {
+        addLogEntry(name, streamName, buffer);
+      }
+    } catch {
+      // Stream closed or error
+    }
+  };
+  
+  // Start piping both streams (don't await - run in background)
+  pipeStream(proc.stdout as ReadableStream<Uint8Array> | null, "stdout");
+  pipeStream(proc.stderr as ReadableStream<Uint8Array> | null, "stderr");
+}
 
 export async function startProject(
   name: string,
@@ -12,9 +56,22 @@ export async function startProject(
 ): Promise<{ port: number; coldStartTime: number }> {
   const currentState = getProjectState(name);
   
+  // Check if already running (either managed or orphan)
   if (currentState?.status === "running" && currentState.pid && currentState.port) {
-    return { port: currentState.port, coldStartTime: 0 };
+    // Verify the process is actually alive
+    const isAlive = await isProcessRunning(currentState.pid);
+    if (isAlive) {
+      return { port: currentState.port, coldStartTime: 0 };
+    }
+    // Process died - clean up and continue to start fresh
+    if (currentState.port) {
+      releasePort(currentState.port);
+    }
+    clearOrphanPid(name);
   }
+  
+  // Clear any orphan tracking since we're starting fresh
+  clearOrphanPid(name);
   
   const port = await findAvailablePort(settings);
   
@@ -41,6 +98,9 @@ export async function startProject(
   });
   
   processes.set(name, proc);
+  
+  // Start piping output to logs database
+  pipeOutputToLogs(name, proc);
   
   const healthy = await waitForHealthy(port, settings);
   
@@ -71,7 +131,28 @@ export async function startProject(
   return { port, coldStartTime };
 }
 
-export async function stopProject(name: string): Promise<void> {
+const GRACEFUL_SHUTDOWN_TIMEOUT = 5000; // 5 seconds
+
+/**
+ * Wait for a process to exit, with timeout.
+ * Returns true if process exited, false if timeout.
+ */
+async function waitForProcessExit(pid: number, timeout: number): Promise<boolean> {
+  const start = Date.now();
+  const interval = 100;
+  
+  while (Date.now() - start < timeout) {
+    const running = await isProcessRunning(pid);
+    if (!running) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  
+  return false;
+}
+
+export async function stopProject(name: string, forceKill: boolean = false): Promise<void> {
   const state = getProjectState(name);
   
   if (!state || state.status !== "running") {
@@ -79,16 +160,43 @@ export async function stopProject(name: string): Promise<void> {
   }
   
   const proc = processes.get(name);
+  const orphanPid = orphanPids.get(name);
+  const pid = proc?.pid ?? orphanPid ?? state.pid;
   
+  // Send SIGTERM first for graceful shutdown
   if (proc) {
-    proc.kill();
-    processes.delete(name);
-  } else if (state.pid) {
+    proc.kill("SIGTERM");
+  } else if (pid) {
     try {
-      process.kill(state.pid, "SIGTERM");
+      process.kill(pid, "SIGTERM");
     } catch {
-      
+      // Process already dead
     }
+  }
+  
+  // Wait for graceful shutdown
+  if (pid && !forceKill) {
+    const exited = await waitForProcessExit(pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+    
+    if (!exited) {
+      // Process didn't exit gracefully, force kill
+      console.log(`[Process] ${name} didn't exit gracefully, sending SIGKILL`);
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Process already dead
+      }
+      // Wait a bit for SIGKILL to take effect
+      await waitForProcessExit(pid, 1000);
+    }
+  }
+  
+  // Clean up tracking
+  if (proc) {
+    processes.delete(name);
+  }
+  if (orphanPid) {
+    orphanPids.delete(name);
   }
   
   if (state.port) {
@@ -162,4 +270,74 @@ export function getProcessOutput(name: string): { stdout: ReadableStream; stderr
 export async function stopAllProjects(): Promise<void> {
   const names = Array.from(processes.keys());
   await Promise.all(names.map((name) => stopProject(name)));
+  
+  // Also stop any orphan processes we adopted
+  for (const [name, pid] of orphanPids) {
+    try {
+      process.kill(pid, "SIGTERM");
+      console.log(`[Process] Stopped orphan process ${name} (PID: ${pid})`);
+    } catch {
+      // Process already dead
+    }
+  }
+  orphanPids.clear();
+}
+
+/**
+ * Reconcile in-memory state with DB on daemon startup.
+ * - Checks if "running" processes are actually alive
+ * - Cleans up dead processes
+ * - Adopts orphan processes (tracks PID for later cleanup)
+ * - Marks ports as used for live processes
+ */
+export async function reconcileOrphanProcesses(): Promise<{ adopted: number; cleaned: number }> {
+  const states = getAllStates();
+  let adopted = 0;
+  let cleaned = 0;
+  
+  for (const [name, state] of Object.entries(states)) {
+    if (state.status !== "running" || !state.pid) {
+      continue;
+    }
+    
+    const isAlive = await isProcessRunning(state.pid);
+    
+    if (isAlive && state.port) {
+      // Process is still running - adopt it
+      // We can't get the Subprocess handle, but we can track the PID
+      orphanPids.set(name, state.pid);
+      markPortUsed(state.port);
+      console.log(`[Process] Adopted orphan: ${name} (PID: ${state.pid}, port: ${state.port})`);
+      adopted++;
+    } else {
+      // Process is dead - clean up state
+      setProjectState(name, {
+        status: "stopped",
+        pid: null,
+        port: null,
+        websocket_connections: 0,
+      });
+      if (state.port) {
+        releasePort(state.port);
+      }
+      console.log(`[Process] Cleaned stale state: ${name} (was PID: ${state.pid})`);
+      cleaned++;
+    }
+  }
+  
+  return { adopted, cleaned };
+}
+
+/**
+ * Check if we have an orphan PID for a project (adopted from previous daemon run)
+ */
+export function getOrphanPid(name: string): number | undefined {
+  return orphanPids.get(name);
+}
+
+/**
+ * Remove orphan tracking when we start a fresh process
+ */
+export function clearOrphanPid(name: string): void {
+  orphanPids.delete(name);
 }
