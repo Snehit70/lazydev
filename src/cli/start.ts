@@ -48,8 +48,12 @@ export async function run(port?: number) {
       // Update proxy config (project mappings)
       setConfig(newConfig);
       
-      // Update idle watcher config getter
+      // Update idle watcher with new config getter AND settings
       setConfigGetter(() => newConfig.projects);
+      
+      // Restart idle watcher with new settings (scan_interval, timeouts, etc.)
+      stopIdleWatcher();
+      startIdleWatcher(newConfig.settings);
       
       console.log(`✓ Hot reloaded: ${Object.keys(newConfig.projects).length} projects`);
     });

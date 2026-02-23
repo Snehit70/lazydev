@@ -273,6 +273,8 @@ export async function stopAllProjects(): Promise<void> {
   
   // Also stop any orphan processes we adopted (with graceful shutdown)
   for (const [name, pid] of orphanPids) {
+    const state = getProjectState(name);
+    
     try {
       process.kill(pid, "SIGTERM");
       console.log(`[Process] Stopping orphan process ${name} (PID: ${pid})`);
@@ -290,6 +292,17 @@ export async function stopAllProjects(): Promise<void> {
     } catch {
       // Process already dead
     }
+    
+    // Update DB state for this orphan
+    if (state?.port) {
+      releasePort(state.port);
+    }
+    setProjectState(name, {
+      status: "stopped",
+      pid: null,
+      port: null,
+      last_activity: null,
+    });
   }
   orphanPids.clear();
 }
