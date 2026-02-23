@@ -152,7 +152,7 @@ async function waitForProcessExit(pid: number, timeout: number): Promise<boolean
   return false;
 }
 
-export async function stopProject(name: string, forceKill: boolean = false): Promise<void> {
+export async function stopProject(name: string): Promise<void> {
   const state = getProjectState(name);
   
   if (!state || state.status !== "running") {
@@ -174,19 +174,17 @@ export async function stopProject(name: string, forceKill: boolean = false): Pro
     }
   }
   
-  // Wait for graceful shutdown
-  if (pid && !forceKill) {
+  // Wait for graceful shutdown, escalate to SIGKILL if needed
+  if (pid) {
     const exited = await waitForProcessExit(pid, GRACEFUL_SHUTDOWN_TIMEOUT);
     
     if (!exited) {
-      // Process didn't exit gracefully, force kill
       console.log(`[Process] ${name} didn't exit gracefully, sending SIGKILL`);
       try {
         process.kill(pid, "SIGKILL");
       } catch {
         // Process already dead
       }
-      // Wait a bit for SIGKILL to take effect
       await waitForProcessExit(pid, 1000);
     }
   }
@@ -360,7 +358,17 @@ export async function reconcileOrphanProcesses(): Promise<{ adopted: number; cle
       // Process is alive but has no port - can't proxy to it, kill it
       try {
         process.kill(state.pid, "SIGTERM");
-        await waitForProcessExit(state.pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+        const exited = await waitForProcessExit(state.pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+        
+        if (!exited) {
+          // Escalate to SIGKILL
+          try {
+            process.kill(state.pid, "SIGKILL");
+          } catch {
+            // Already dead
+          }
+          await waitForProcessExit(state.pid, 1000);
+        }
       } catch {
         // Process already dead or can't be killed
       }

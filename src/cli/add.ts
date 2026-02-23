@@ -101,6 +101,12 @@ export async function run(path?: string, options: AddOptions = {}) {
   // Use provided timeout or default
   const idleTimeout = options.timeout ?? "10m";
   
+  // Validate timeout format
+  if (idleTimeout && !/^\d+(ms|s|m|h)?$/.test(idleTimeout)) {
+    console.error(`Invalid timeout format: "${idleTimeout}". Use format like "10m", "30s", "1h"`);
+    process.exit(1);
+  }
+  
   const configContent = existsSync(CONFIG_PATH) 
     ? readFileSync(CONFIG_PATH, "utf-8") 
     : "settings:\n  proxy_port: 80\n  idle_timeout: 10m\nprojects:\n";
