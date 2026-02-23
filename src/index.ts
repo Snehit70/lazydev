@@ -9,6 +9,7 @@ const args = parseArgs({
     port: { type: "string", short: "p" },
     all: { type: "boolean", short: "a" },
     json: { type: "boolean", short: "j" },
+    follow: { type: "boolean", short: "f" },
   },
   allowPositionals: true,
 });
@@ -55,7 +56,7 @@ async function run() {
       await import("./cli/down").then((m) => m.run(positionals[0], args.values.all));
       break;
     case "logs":
-      await import("./cli/logs").then((m) => m.run(positionals[0]));
+      await import("./cli/logs").then((m) => m.run(positionals[0], args.values.follow));
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -82,6 +83,7 @@ Commands:
   down <name>       Force stop a project
   down --all        Stop all projects
   logs [name]       Show logs
+  logs <name> -f    Follow logs in real-time
 
 Options:
   -h, --help        Show this help
@@ -89,6 +91,7 @@ Options:
   -p, --port <n>    Override proxy port
   -a, --all         Apply to all projects
   -j, --json        Output as JSON
+  -f, --follow      Follow logs in real-time
 `);
 }
 
