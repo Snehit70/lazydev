@@ -34,6 +34,7 @@ async function proxyRequest(
   
   const proxyHeaders = new Headers(req.headers);
   proxyHeaders.delete("Accept-Encoding");
+  proxyHeaders.set("Host", `localhost:${targetPort}`);
   
   const proxyReq = new Request(url.toString(), {
     method: req.method,
@@ -42,7 +43,17 @@ async function proxyRequest(
     redirect: "manual",
   });
   
-  return fetch(proxyReq);
+  const response = await fetch(proxyReq);
+  
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.set("X-Forwarded-Host", req.headers.get("host") ?? "localhost");
+  responseHeaders.set("X-Forwarded-Proto", "http");
+  
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders,
+  });
 }
 
 export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {

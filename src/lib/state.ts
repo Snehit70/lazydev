@@ -34,6 +34,17 @@ function getDb(): Database {
         request_history TEXT
       )
     `);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        stream TEXT,
+        timestamp INTEGER,
+        message TEXT
+      )
+    `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_logs_name ON logs(name)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)`);
   }
   return db;
 }
