@@ -271,11 +271,22 @@ export async function stopAllProjects(): Promise<void> {
   const names = Array.from(processes.keys());
   await Promise.all(names.map((name) => stopProject(name)));
   
-  // Also stop any orphan processes we adopted
+  // Also stop any orphan processes we adopted (with graceful shutdown)
   for (const [name, pid] of orphanPids) {
     try {
       process.kill(pid, "SIGTERM");
-      console.log(`[Process] Stopped orphan process ${name} (PID: ${pid})`);
+      console.log(`[Process] Stopping orphan process ${name} (PID: ${pid})`);
+      
+      const exited = await waitForProcessExit(pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+      if (!exited) {
+        console.log(`[Process] Orphan ${name} didn't exit gracefully, sending SIGKILL`);
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Already dead
+        }
+        await waitForProcessExit(pid, 1000);
+      }
     } catch {
       // Process already dead
     }
@@ -296,6 +307,30 @@ export async function reconcileOrphanProcesses(): Promise<{ adopted: number; cle
   let cleaned = 0;
   
   for (const [name, state] of Object.entries(states)) {
+    // Handle stale "starting" state (daemon crashed during startup)
+    if (state.status === "starting") {
+      if (state.pid) {
+        // Try to kill any lingering process
+        try {
+          process.kill(state.pid, "SIGTERM");
+        } catch {
+          // Process already dead
+        }
+      }
+      setProjectState(name, {
+        status: "stopped",
+        pid: null,
+        port: null,
+        websocket_connections: 0,
+      });
+      if (state.port) {
+        releasePort(state.port);
+      }
+      console.log(`[Process] Cleaned stale 'starting' state: ${name}`);
+      cleaned++;
+      continue;
+    }
+    
     if (state.status !== "running" || !state.pid) {
       continue;
     }
@@ -303,12 +338,27 @@ export async function reconcileOrphanProcesses(): Promise<{ adopted: number; cle
     const isAlive = await isProcessRunning(state.pid);
     
     if (isAlive && state.port) {
-      // Process is still running - adopt it
-      // We can't get the Subprocess handle, but we can track the PID
+      // Process is still running with valid port - adopt it
       orphanPids.set(name, state.pid);
       markPortUsed(state.port);
       console.log(`[Process] Adopted orphan: ${name} (PID: ${state.pid}, port: ${state.port})`);
       adopted++;
+    } else if (isAlive && !state.port) {
+      // Process is alive but has no port - can't proxy to it, kill it
+      try {
+        process.kill(state.pid, "SIGTERM");
+        await waitForProcessExit(state.pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+      } catch {
+        // Process already dead or can't be killed
+      }
+      setProjectState(name, {
+        status: "stopped",
+        pid: null,
+        port: null,
+        websocket_connections: 0,
+      });
+      console.log(`[Process] Killed portless orphan: ${name} (PID: ${state.pid})`);
+      cleaned++;
     } else {
       // Process is dead - clean up state
       setProjectState(name, {
