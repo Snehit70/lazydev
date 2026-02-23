@@ -1,11 +1,15 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { join } from "path";
 import { $ } from "bun";
 
 const HOME = homedir();
 const SYSTEMD_DIR = join(HOME, ".config/systemd/user");
 const SERVICE_PATH = join(SYSTEMD_DIR, "lazydev.service");
+
+export function isSystemdAvailable(): boolean {
+  return platform() === "linux" && existsSync("/run/systemd/system");
+}
 
 const SERVICE_TEMPLATE = `[Unit]
 Description=LazyDev - Scale-to-zero dev server manager
@@ -23,20 +27,49 @@ StandardError=journal
 WantedBy=default.target
 `;
 
+function escapeSystemdPercent(str: string): string {
+  return str.replace(/%/g, "%%");
+}
+
 function getBunPath(): string {
-  return process.execPath || "/home/snehit/.bun/bin/bun";
+  if (process.execPath) {
+    return process.execPath;
+  }
+  
+  const candidates = [
+    join(HOME, ".bun/bin/bun"),
+    "/usr/local/bin/bun",
+    "/usr/bin/bun",
+  ];
+  
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  
+  return "bun";
 }
 
 function getLazydevPath(): string {
-  // If lazydev is installed globally, use that
-  // Otherwise use local dist
-  const globalPath = join(HOME, ".local/bin/lazydev");
-  if (existsSync(globalPath)) {
-    return globalPath;
+  const globalBin = join(HOME, ".local/bin/lazydev");
+  if (existsSync(globalBin)) {
+    return globalBin;
   }
   
-  // Fallback to local dist (development)
-  return join(HOME, "projects/lazydev/dist/index.js");
+  const moduleDir = import.meta.dir;
+  const distPath = join(moduleDir, "..", "..", "dist", "index.js");
+  
+  if (existsSync(distPath)) {
+    return distPath;
+  }
+  
+  const srcPath = join(moduleDir, "..", "..", "src", "index.ts");
+  if (existsSync(srcPath)) {
+    return srcPath;
+  }
+  
+  throw new Error("Could not find lazydev installation path");
 }
 
 export function isServiceInstalled(): boolean {
@@ -44,21 +77,31 @@ export function isServiceInstalled(): boolean {
 }
 
 export async function installService(): Promise<void> {
+  if (!isSystemdAvailable()) {
+    throw new Error("systemd is not available on this system");
+  }
+  
   if (!existsSync(SYSTEMD_DIR)) {
     mkdirSync(SYSTEMD_DIR, { recursive: true });
   }
   
+  const bunPath = escapeSystemdPercent(getBunPath());
+  const lazydevPath = escapeSystemdPercent(getLazydevPath());
+  
   const serviceContent = SERVICE_TEMPLATE
-    .replace("%BUN_PATH%", getBunPath())
-    .replace("%LAZYDEV_PATH%", getLazydevPath());
+    .replace("%BUN_PATH%", bunPath)
+    .replace("%LAZYDEV_PATH%", lazydevPath);
   
   writeFileSync(SERVICE_PATH, serviceContent);
   
-  // Reload systemd daemon
   await $`systemctl --user daemon-reload`.quiet();
 }
 
 export async function isServiceRunning(): Promise<boolean> {
+  if (!isSystemdAvailable()) {
+    return false;
+  }
+  
   try {
     const result = await $`systemctl --user is-active lazydev`.quiet().text();
     return result.trim() === "active";
@@ -68,6 +111,10 @@ export async function isServiceRunning(): Promise<boolean> {
 }
 
 export async function startService(): Promise<{ success: boolean; message: string }> {
+  if (!isSystemdAvailable()) {
+    return { success: false, message: "systemd is not available on this system" };
+  }
+  
   try {
     if (!isServiceInstalled()) {
       await installService();
@@ -88,9 +135,14 @@ export async function startService(): Promise<{ success: boolean; message: strin
 }
 
 export async function stopService(): Promise<{ success: boolean; message: string }> {
+  if (!isSystemdAvailable()) {
+    return { success: false, message: "systemd is not available on this system" };
+  }
+  
   try {
     await $`systemctl --user stop lazydev`.quiet();
-    return { success: true, message: "Service stopped" };
+    await $`systemctl --user disable lazydev`.quiet();
+    return { success: true, message: "Service stopped and disabled" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, message };
@@ -98,6 +150,10 @@ export async function stopService(): Promise<{ success: boolean; message: string
 }
 
 export async function restartService(): Promise<{ success: boolean; message: string }> {
+  if (!isSystemdAvailable()) {
+    return { success: false, message: "systemd is not available on this system" };
+  }
+  
   try {
     if (!isServiceInstalled()) {
       await installService();
@@ -114,6 +170,10 @@ export async function restartService(): Promise<{ success: boolean; message: str
 }
 
 export async function getServiceStatus(): Promise<{ active: boolean; enabled: boolean }> {
+  if (!isSystemdAvailable()) {
+    return { active: false, enabled: false };
+  }
+  
   const active = await isServiceRunning();
   
   let enabled = false;
@@ -128,14 +188,26 @@ export async function getServiceStatus(): Promise<{ active: boolean; enabled: bo
 }
 
 export async function getServiceLogs(lines: number = 50): Promise<string> {
+  if (!isSystemdAvailable()) {
+    return "";
+  }
+  
   try {
     const result = await $`journalctl --user -u lazydev -n ${String(lines)} --no-pager`.quiet().text();
     return result;
   } catch {
-    return "No logs available";
+    return "";
   }
 }
 
 export async function followServiceLogs(): Promise<void> {
-  await $`journalctl --user -u lazydev -f`;
+  if (!isSystemdAvailable()) {
+    throw new Error("systemd is not available on this system");
+  }
+  
+  try {
+    await $`journalctl --user -u lazydev -f`;
+  } catch (err) {
+    throw new Error(`Failed to follow lazydev service logs: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

@@ -11,10 +11,10 @@ export async function run(name?: string, follow: boolean = false, lines: number 
         await followServiceLogs();
       } else {
         const logs = await getServiceLogs(lines);
-        if (logs.trim()) {
+        if (logs && logs.trim()) {
           console.log(logs);
         } else {
-          console.log("No daemon logs available.");
+          console.log("No daemon logs available. Is the service running?");
         }
       }
       return;

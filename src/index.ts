@@ -10,9 +10,9 @@ const args = parseArgs({
     all: { type: "boolean", short: "a" },
     json: { type: "boolean", short: "j" },
     follow: { type: "boolean", short: "f" },
-    lines: { type: "string", short: "n" },
+    lines: { type: "string", short: "l" },
     // Add command options
-    name: { type: "string" },
+    name: { type: "string", short: "n" },
     cmd: { type: "string", short: "c" },
     timeout: { type: "string", short: "t" },
     // Start options
@@ -76,7 +76,7 @@ async function run() {
       await import("./cli/logs").then((m) => m.run(
         positionals[0],
         args.values.follow,
-        args.values.lines ? parseInt(args.values.lines) : 100
+        args.values.lines ? Math.max(1, parseInt(args.values.lines) || 100) : 100
       ));
       break;
     default:
@@ -111,17 +111,17 @@ Commands:
 Options:
   -h, --help        Show this help
   -v, --version     Show version
-  -p, --port <n>    Override proxy port
+  -p, --port <n>    Override proxy port (only with --foreground)
   -a, --all         Apply to all projects
   -j, --json        Output as JSON
   -f, --follow      Follow logs in real-time
-  -n, --lines <n>   Number of log lines (default: 100)
+  -l, --lines <n>   Number of log lines (default: 100)
   -F, --foreground  Run in foreground (for systemd)
 
 Add Options:
-  --name <name>     Project name (default: directory name)
-  -c, --cmd <cmd>   Start command (default: auto-detected)
-  -t, --timeout <t> Idle timeout (default: 10m)
+  -n, --name <name>     Project name (default: directory name)
+  -c, --cmd <cmd>       Start command (default: auto-detected)
+  -t, --timeout <t>     Idle timeout (default: 10m)
 `);
 }
 

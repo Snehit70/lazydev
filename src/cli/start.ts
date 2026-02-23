@@ -10,6 +10,11 @@ import type { Config } from "../lib/types";
 export async function run(port?: number, foreground: boolean = false) {
   // If not foreground mode, manage via systemd
   if (!foreground) {
+    if (port) {
+      console.warn("Warning: --port flag is ignored when using systemd mode.");
+      console.warn("         Modify ~/.config/lazydev/config.yaml to change the port.");
+    }
+    
     const status = await getServiceStatus();
     
     if (status.active) {
