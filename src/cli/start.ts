@@ -61,20 +61,24 @@ export async function run(port?: number) {
     console.log("✓ Config hot reload enabled");
     console.log("\nPress Ctrl+C to stop");
     
-    const shutdown = async () => {
-      console.log("\nStopping...");
-      stopWatchingConfig();
-      stopIdleWatcher();
-      stopProxy();
-      await stopAllProjects();
-      removeDaemonPid();
-      process.exit(0);
-    };
+    // Keep process alive until signal
+    const shutdownPromise = new Promise<void>((resolve) => {
+      const shutdown = async () => {
+        console.log("\nStopping...");
+        stopWatchingConfig();
+        stopIdleWatcher();
+        stopProxy();
+        await stopAllProjects();
+        removeDaemonPid();
+        resolve();
+        process.exit(0);
+      };
+      
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+    });
     
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-    
-    await new Promise(() => {});
+    await shutdownPromise;
     
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
