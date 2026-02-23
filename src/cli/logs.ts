@@ -1,37 +1,34 @@
 import { loadConfig } from "../lib/config";
 import { getProjectState, getProjectLogs, getProjectLogsSince, type LogEntry } from "../lib/state";
+import { getServiceLogs, followServiceLogs } from "../lib/systemd";
 
-export async function run(name?: string, follow: boolean = false) {
+export async function run(name?: string, follow: boolean = false, lines: number = 100) {
   try {
+    // If no project name, show daemon logs
+    if (!name) {
+      if (follow) {
+        console.log("Following LazyDev daemon logs (Ctrl+C to stop)...\n");
+        await followServiceLogs();
+      } else {
+        const logs = await getServiceLogs(lines);
+        if (logs.trim()) {
+          console.log(logs);
+        } else {
+          console.log("No daemon logs available.");
+        }
+      }
+      return;
+    }
+    
+    // Show logs for specific project
     const config = loadConfig();
     
-    if (name && !config.projects[name]) {
+    if (!config.projects[name]) {
       console.error(`Project "${name}" not found.`);
       process.exit(1);
     }
     
-    if (name) {
-      await showProjectLogs(name, follow);
-    } else {
-      // Show logs for all projects
-      const projects = Object.keys(config.projects);
-      if (projects.length === 0) {
-        console.log("No projects configured.");
-        return;
-      }
-      
-      for (const project of projects) {
-        const logs = getProjectLogs(project, 50);
-        if (logs.length > 0) {
-          console.log(`\n=== ${project} ===`);
-          printLogs(logs);
-        }
-      }
-      
-      if (projects.every(p => getProjectLogs(p, 1).length === 0)) {
-        console.log("No logs available. Start some projects first.");
-      }
-    }
+    await showProjectLogs(name, follow, lines);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Error:", message);
@@ -51,9 +48,8 @@ function printLogs(logs: LogEntry[]): void {
   }
 }
 
-async function showProjectLogs(name: string, follow: boolean): Promise<void> {
-  // Show recent logs first
-  const recentLogs = getProjectLogs(name, 100);
+async function showProjectLogs(name: string, follow: boolean, lines: number): Promise<void> {
+  const recentLogs = getProjectLogs(name, lines);
   
   if (recentLogs.length === 0) {
     const state = getProjectState(name);
@@ -79,7 +75,6 @@ async function showProjectLogs(name: string, follow: boolean): Promise<void> {
     
     console.log(`\nFollowing logs for ${name} (Ctrl+C to stop)...\n`);
     
-    // Poll for new logs
     let lastTimestamp = recentLogs.length > 0 
       ? recentLogs[recentLogs.length - 1]!.timestamp 
       : Date.now();
@@ -94,7 +89,6 @@ async function showProjectLogs(name: string, follow: boolean): Promise<void> {
         lastTimestamp = newLogs[newLogs.length - 1]!.timestamp;
       }
       
-      // Check if project is still running
       const currentState = getProjectState(name);
       if (currentState?.status !== "running") {
         console.log(`\nProject "${name}" stopped.`);
@@ -102,17 +96,14 @@ async function showProjectLogs(name: string, follow: boolean): Promise<void> {
       }
     };
     
-    // Set up polling
     const intervalId = setInterval(pollLogs, pollInterval);
     
-    // Handle Ctrl+C
     process.on("SIGINT", () => {
       clearInterval(intervalId);
       console.log("\nStopped following logs.");
       process.exit(0);
     });
     
-    // Keep running
     await new Promise(() => {});
   }
 }

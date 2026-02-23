@@ -4,9 +4,41 @@ import { startIdleWatcher, setConfigGetter, stopIdleWatcher } from "../lib/idle"
 import { saveDaemonPid, removeDaemonPid } from "../lib/state";
 import { stopAllProjects, reconcileOrphanProcesses } from "../lib/process";
 import { initializePortsFromState } from "../lib/port";
+import { startService, getServiceStatus } from "../lib/systemd";
 import type { Config } from "../lib/types";
 
-export async function run(port?: number) {
+export async function run(port?: number, foreground: boolean = false) {
+  // If not foreground mode, manage via systemd
+  if (!foreground) {
+    const status = await getServiceStatus();
+    
+    if (status.active) {
+      console.log("LazyDev is already running.");
+      console.log("\nCommands:");
+      console.log("  lazydev status    - Check project status");
+      console.log("  lazydev logs      - View daemon logs");
+      console.log("  lazydev stop      - Stop the daemon");
+      return;
+    }
+    
+    console.log("Starting LazyDev service...\n");
+    const result = await startService();
+    
+    if (result.success) {
+      console.log("✓ LazyDev service started");
+      console.log("  Access projects at: http://<project>.localhost");
+      console.log("\nCommands:");
+      console.log("  lazydev status    - Check project status");
+      console.log("  lazydev logs      - View daemon logs");
+      console.log("  lazydev stop      - Stop the daemon");
+    } else {
+      console.error("Failed to start service:", result.message);
+      process.exit(1);
+    }
+    return;
+  }
+  
+  // Foreground mode (used by systemd)
   console.log("Starting LazyDev daemon...\n");
   
   try {
@@ -16,10 +48,8 @@ export async function run(port?: number) {
       config.settings.proxy_port = port;
     }
     
-    // Initialize port tracking from DB state
     initializePortsFromState();
     
-    // Reconcile orphan processes from previous daemon run
     const { adopted, cleaned } = await reconcileOrphanProcesses();
     if (adopted > 0 || cleaned > 0) {
       console.log(`✓ Reconciled state: ${adopted} adopted, ${cleaned} cleaned`);
@@ -36,22 +66,14 @@ export async function run(port?: number) {
     startIdleWatcher(config.settings);
     console.log(`✓ Idle watcher started (timeout: ${config.settings.idle_timeout / 60000}m)`);
     
-    // Watch for config changes and hot reload
     watchConfig(undefined, (newConfig: Config) => {
-      // Preserve port override if it was set
       if (port) {
         newConfig.settings.proxy_port = port;
       }
       
       config = newConfig;
-      
-      // Update proxy config (project mappings)
       setConfig(newConfig);
-      
-      // Update idle watcher with new config getter AND settings
       setConfigGetter(() => newConfig.projects);
-      
-      // Restart idle watcher with new settings (scan_interval, timeouts, etc.)
       stopIdleWatcher();
       startIdleWatcher(newConfig.settings);
       
@@ -59,9 +81,7 @@ export async function run(port?: number) {
     });
     
     console.log("✓ Config hot reload enabled");
-    console.log("\nPress Ctrl+C to stop");
     
-    // Keep process alive until signal
     const shutdownPromise = new Promise<void>((resolve) => {
       const shutdown = async () => {
         console.log("\nStopping...");
