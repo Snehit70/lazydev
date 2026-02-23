@@ -15,6 +15,7 @@ const args = parseArgs({
     name: { type: "string", short: "n" },
     cmd: { type: "string", short: "c" },
     timeout: { type: "string", short: "t" },
+    yes: { type: "boolean", short: "y" },
     // Start options
     foreground: { type: "boolean", short: "F" },
   },
@@ -43,6 +44,7 @@ async function run() {
         name: args.values.name,
         cmd: args.values.cmd,
         timeout: args.values.timeout,
+        nonInteractive: args.values.yes ?? false,
       }));
       break;
     case "remove":
@@ -122,6 +124,7 @@ Add Options:
   -n, --name <name>     Project name (default: directory name)
   -c, --cmd <cmd>       Start command (default: auto-detected)
   -t, --timeout <t>     Idle timeout (default: 10m)
+  -y, --yes             Skip interactive prompts
 `);
 }
 
