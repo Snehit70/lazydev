@@ -1,11 +1,19 @@
-import { stopProxy } from "../lib/proxy";
-import { stopIdleWatcher } from "../lib/idle";
+import { readDaemonPid, removeDaemonPid } from "../lib/state";
 
 export async function run() {
-  console.log("Stopping LazyDev daemon...\n");
+  const pid = readDaemonPid();
   
-  stopIdleWatcher();
-  stopProxy();
+  if (!pid) {
+    console.log("LazyDev daemon is not running (no PID file found).");
+    return;
+  }
   
-  console.log("✓ LazyDev stopped");
+  try {
+    process.kill(pid, "SIGTERM");
+    removeDaemonPid();
+    console.log(`✓ Stopped LazyDev daemon (PID: ${pid})`);
+  } catch {
+    removeDaemonPid();
+    console.log("LazyDev daemon was not running (stale PID file removed).");
+  }
 }

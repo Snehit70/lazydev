@@ -46,6 +46,9 @@ async function run() {
     case "stop":
       await import("./cli/stop").then((m) => m.run());
       break;
+    case "restart":
+      await import("./cli/restart").then((m) => m.run());
+      break;
     case "status":
       await import("./cli/status").then((m) => m.run(positionals[0]));
       break;
@@ -78,6 +81,7 @@ Commands:
   list              List all configured projects
   start             Start the proxy daemon
   stop              Stop the proxy daemon
+  restart           Restart the proxy daemon
   status [name]     Show status of all projects or specific one
   up <name>         Force start a project
   down <name>       Force stop a project

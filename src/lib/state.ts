@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { ProjectState, DaemonState, ProjectMetrics } from "./types";
@@ -9,6 +9,7 @@ if (!homeDir) throw new Error("Cannot determine home directory");
 
 const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(homeDir, ".local/share/lazydev");
 const DB_PATH = join(STATE_DIR, "state.db");
+const PID_PATH = join(STATE_DIR, "daemon.pid");
 
 let db: Database | null = null;
 
@@ -207,5 +208,21 @@ export function closeDb(): void {
   if (db) {
     db.close();
     db = null;
+  }
+}
+
+export function saveDaemonPid(pid: number): void {
+  writeFileSync(PID_PATH, String(pid));
+}
+
+export function readDaemonPid(): number | null {
+  if (!existsSync(PID_PATH)) return null;
+  const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
+  return isNaN(pid) ? null : pid;
+}
+
+export function removeDaemonPid(): void {
+  if (existsSync(PID_PATH)) {
+    unlinkSync(PID_PATH);
   }
 }

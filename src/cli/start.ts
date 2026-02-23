@@ -1,6 +1,7 @@
 import { loadConfig } from "../lib/config";
 import { startProxy } from "../lib/proxy";
 import { startIdleWatcher, setConfigGetter } from "../lib/idle";
+import { saveDaemonPid, removeDaemonPid } from "../lib/state";
 
 export async function run(port?: number) {
   console.log("Starting LazyDev daemon...\n");
@@ -11,6 +12,8 @@ export async function run(port?: number) {
     if (port) {
       config.settings.proxy_port = port;
     }
+    
+    saveDaemonPid(process.pid);
     
     await startProxy(config);
     
@@ -25,18 +28,22 @@ export async function run(port?: number) {
     
     process.on("SIGINT", () => {
       console.log("\nStopping...");
+      removeDaemonPid();
       process.exit(0);
     });
     
     process.on("SIGTERM", () => {
       console.log("\nStopping...");
+      removeDaemonPid();
       process.exit(0);
     });
     
     await new Promise(() => {});
     
-  } catch (err: any) {
-    console.error("Failed to start:", err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to start:", message);
+    removeDaemonPid();
     process.exit(1);
   }
 }
