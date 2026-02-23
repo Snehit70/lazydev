@@ -3,6 +3,7 @@ import { homedir } from "os";
 import { join, basename } from "path";
 import { parse, stringify } from "yaml";
 import type { Config } from "../lib/types";
+import { expandTilde } from "../lib/config";
 
 const HOME = homedir();
 const CONFIG_PATH = join(HOME, ".config/lazydev/config.yaml");
@@ -42,7 +43,7 @@ export async function run(path?: string) {
     process.exit(1);
   }
   
-  const cwd = path.replace("~", HOME);
+  const cwd = expandTilde(path);
   
   if (!existsSync(cwd)) {
     console.error(`Directory not found: ${cwd}`);

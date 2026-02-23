@@ -8,7 +8,9 @@ const CONFIG_PATH = "~/.config/lazydev/config.yaml";
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
-    return path.replace("~", homedir());
+    const home = homedir();
+    if (!home) throw new Error("Cannot determine home directory");
+    return path.replace("~", home);
   }
   return path;
 }

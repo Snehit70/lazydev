@@ -4,7 +4,10 @@ import { homedir } from "os";
 import { join } from "path";
 import type { ProjectState, DaemonState, ProjectMetrics } from "./types";
 
-const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(homedir(), ".local/share/lazydev");
+const homeDir = homedir();
+if (!homeDir) throw new Error("Cannot determine home directory");
+
+const STATE_DIR = process.env["LAZYDEV_STATE_DIR"] ?? join(homeDir, ".local/share/lazydev");
 const DB_PATH = join(STATE_DIR, "state.db");
 
 let db: Database | null = null;
