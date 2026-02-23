@@ -25,6 +25,11 @@ function getLazydevPath(): string {
     return globalBin;
   }
   
+  const bunGlobalBin = join(HOME, ".bun/bin/lazydev");
+  if (existsSync(bunGlobalBin)) {
+    return bunGlobalBin;
+  }
+  
   const moduleDir = import.meta.dir;
   const distPath = join(moduleDir, "..", "..", "dist", "index.js");
   
@@ -82,6 +87,7 @@ WantedBy=default.target
 `;
   
   await Bun.write(SERVICE_PATH, serviceContent);
+  console.log(`Created systemd service file: ${SERVICE_PATH}`);
   
   await $`systemctl --user daemon-reload`.quiet();
 }
@@ -196,8 +202,10 @@ export async function getServiceLogs(lines: number = 100): Promise<string> {
     return "";
   }
   
+  const safeLines = Math.max(1, Math.floor(lines) || 100);
+  
   try {
-    const result = await $`journalctl --user -u lazydev -n ${String(lines)} --no-pager`.quiet().text();
+    const result = await $`journalctl --user -u lazydev -n ${safeLines.toString()} --no-pager`.quiet().text();
     return result;
   } catch (err) {
     console.debug(`getServiceLogs failed: ${err instanceof Error ? err.message : String(err)}`);
