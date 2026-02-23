@@ -9,7 +9,7 @@ _lazydev_completion() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init add remove list start stop restart status up down logs"
+    local commands="init add remove list start stop restart status up down logs completions"
     local options="-h --help -v --version -p --port -a --all -j --json -f --follow -l --lines -F --foreground -n --name -c --cmd -t --timeout -y --yes"
 
     if [[ \${cword} -eq 1 ]]; then
@@ -60,6 +60,7 @@ _lazydev() {
         'up:Force start a project'
         'down:Force stop a project'
         'logs:Show logs'
+        'completions:Install shell completions'
     )
 
     local -a options
@@ -140,6 +141,7 @@ complete -c lazydev -n '__fish_use_subcommand' -a status -d 'Show project status
 complete -c lazydev -n '__fish_use_subcommand' -a up -d 'Force start a project'
 complete -c lazydev -n '__fish_use_subcommand' -a down -d 'Force stop a project'
 complete -c lazydev -n '__fish_use_subcommand' -a logs -d 'Show logs'
+complete -c lazydev -n '__fish_use_subcommand' -a completions -d 'Install shell completions'
 
 # Global options
 complete -c lazydev -n '__fish_use_subcommand' -s h -l help -d 'Show help'

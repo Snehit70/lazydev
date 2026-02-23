@@ -107,7 +107,10 @@ export async function run(path?: string, options: AddOptions = {}) {
 	if (existsSync(pkgPath)) {
 		try {
 			pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as PackageJson;
-		} catch {}
+		} catch (err) {
+			// Silently ignore malformed JSON or permission errors
+			// This is not critical - we'll use defaults
+		}
 	}
 	
 	// Default values
@@ -136,9 +139,11 @@ export async function run(path?: string, options: AddOptions = {}) {
 		try {
 			// Project name
 			name = await prompt(rl, `? Project name (${defaultName}): `, defaultName);
-			while (validateName(name)) {
-				console.log(`  ${validateName(name)}`);
+			let nameError = validateName(name);
+			while (nameError) {
+				console.log(`  ${nameError}`);
 				name = await prompt(rl, `? Project name (${defaultName}): `, defaultName);
+				nameError = validateName(name);
 			}
 			
 			// Start command

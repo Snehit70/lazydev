@@ -42,9 +42,7 @@ export async function findAvailablePort(settings: Settings): Promise<number> {
   const [minPort, maxPort] = settings.port_range;
   const systemUsed = await getUsedPorts(settings);
   
-  console.log(`[Port] Finding available port (range: ${minPort}-${maxPort})`);
-  console.log(`[Port] System ports in use: ${systemUsed.size > 0 ? Array.from(systemUsed).join(", ") : "none"}`);
-  console.log(`[Port] LazyDev ports in use: ${usedPorts.size > 0 ? Array.from(usedPorts).join(", ") : "none"}`);
+  console.log(`[Port] Finding available port in ${minPort}-${maxPort} (system: ${systemUsed.size}, tracked: ${usedPorts.size})`);
   
   for (let port = minPort; port <= maxPort; port++) {
     if (!systemUsed.has(port) && !usedPorts.has(port)) {

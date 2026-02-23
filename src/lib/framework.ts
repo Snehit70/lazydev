@@ -19,6 +19,7 @@ const VITE_PLUGINS = [
 	"vite",
 	"@vitejs/plugin-vue",
 	"@vitejs/plugin-react",
+	"@vitejs/plugin-react-swc",
 	"@vitejs/plugin-svelte",
 	"@vitejs/plugin-solid",
 	"@vitejs/plugin-preact",
@@ -65,7 +66,6 @@ function hasNextConfig(cwd: string): boolean {
 		"next.config.js",
 		"next.config.mjs",
 		"next.config.ts",
-		"next.config.json",
 	];
 	return configs.some((f) => existsSync(join(cwd, f)));
 }
