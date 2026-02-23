@@ -10,10 +10,13 @@ const args = parseArgs({
     all: { type: "boolean", short: "a" },
     json: { type: "boolean", short: "j" },
     follow: { type: "boolean", short: "f" },
+    lines: { type: "string", short: "l" },
     // Add command options
     name: { type: "string", short: "n" },
     cmd: { type: "string", short: "c" },
     timeout: { type: "string", short: "t" },
+    // Start options
+    foreground: { type: "boolean", short: "F" },
   },
   allowPositionals: true,
 });
@@ -49,7 +52,10 @@ async function run() {
       await import("./cli/list").then((m) => m.run(args.values.json));
       break;
     case "start":
-      await import("./cli/start").then((m) => m.run(args.values.port ? parseInt(args.values.port) : undefined));
+      await import("./cli/start").then((m) => m.run(
+        args.values.port ? parseInt(args.values.port) : undefined,
+        args.values.foreground
+      ));
       break;
     case "stop":
       await import("./cli/stop").then((m) => m.run());
@@ -67,7 +73,11 @@ async function run() {
       await import("./cli/down").then((m) => m.run(positionals[0], args.values.all));
       break;
     case "logs":
-      await import("./cli/logs").then((m) => m.run(positionals[0], args.values.follow));
+      await import("./cli/logs").then((m) => m.run(
+        positionals[0],
+        args.values.follow,
+        args.values.lines ? Math.max(1, parseInt(args.values.lines) || 100) : 100
+      ));
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -87,28 +97,31 @@ Commands:
   add <path>        Add a project
   remove <name>     Remove a project
   list              List all configured projects
-  start             Start the proxy daemon
+  start             Start the proxy daemon (via systemd)
   stop              Stop the proxy daemon
   restart           Restart the proxy daemon
   status [name]     Show status of all projects or specific one
   up <name>         Force start a project
   down <name>       Force stop a project
   down --all        Stop all projects
-  logs [name]       Show logs
-  logs <name> -f    Follow logs in real-time
+  logs              Show daemon logs
+  logs <name>       Show project logs
+  logs -f           Follow logs in real-time
 
 Options:
   -h, --help        Show this help
   -v, --version     Show version
-  -p, --port <n>    Override proxy port
+  -p, --port <n>    Override proxy port (only with --foreground)
   -a, --all         Apply to all projects
   -j, --json        Output as JSON
   -f, --follow      Follow logs in real-time
+  -l, --lines <n>   Number of log lines (default: 100)
+  -F, --foreground  Run in foreground (for systemd)
 
 Add Options:
   -n, --name <name>     Project name (default: directory name)
-  -c, --cmd <command>   Start command (default: auto-detected)
-  -t, --timeout <time>  Idle timeout (default: 10m)
+  -c, --cmd <cmd>       Start command (default: auto-detected)
+  -t, --timeout <t>     Idle timeout (default: 10m)
 `);
 }
 
