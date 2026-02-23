@@ -1,5 +1,5 @@
 import { serve, type Server } from "bun";
-import type { Config, ProjectConfig } from "./types";
+import type { Config, ProjectConfig, Settings } from "./types";
 import { getProjectState, updateActivity, incrementWebSockets, decrementWebSockets } from "./state";
 import { startProject, checkHealth } from "./process";
 import { markPortUsed } from "./port";
@@ -12,10 +12,12 @@ interface WebSocketData {
 }
 
 let server: Server<WebSocketData> | null = null;
+let currentSettings: Settings | null = null;
 const nameToConfig = new Map<string, ProjectConfig>();
 
 export function setConfig(cfg: Config): void {
   nameToConfig.clear();
+  currentSettings = cfg.settings;
   
   for (const [name, project] of Object.entries(cfg.projects)) {
     nameToConfig.set(name.toLowerCase(), project);
@@ -33,7 +35,7 @@ async function proxyRequest(
   url.port = String(targetPort);
   
   const proxyHeaders = new Headers(req.headers);
-  proxyHeaders.delete("Accept-Encoding");
+  // Keep Accept-Encoding for compression support
   proxyHeaders.set("Host", `localhost:${targetPort}`);
   
   const proxyReq = new Request(url.toString(), {
@@ -77,11 +79,29 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const projectName = projectConfig.name;
       
       if (req.headers.get("upgrade") === "websocket") {
-        const state = getProjectState(projectName);
+        let state = getProjectState(projectName);
         
+        // Cold start for WebSocket connections
         if (state?.status !== "running" || !state.port) {
-          return new Response("Server not running", { status: 503 });
+          if (!currentSettings) {
+            return new Response("Server not configured", { status: 500 });
+          }
+          
+          try {
+            const { port } = await startProject(projectName, projectConfig, currentSettings);
+            markPortUsed(port);
+            state = getProjectState(projectName);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to start server";
+            return new Response(message, { status: 503 });
+          }
         }
+        
+        if (!state?.port) {
+          return new Response("Server failed to start", { status: 503 });
+        }
+        
+        updateActivity(projectName);
         
         const upgraded = srv.upgrade(req, {
           data: { projectName, targetPort: state.port, connected: false } as WebSocketData,

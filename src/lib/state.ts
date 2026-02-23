@@ -226,3 +226,69 @@ export function removeDaemonPid(): void {
     unlinkSync(PID_PATH);
   }
 }
+
+// Log functions
+
+export interface LogEntry {
+  id: number;
+  name: string;
+  stream: "stdout" | "stderr";
+  timestamp: number;
+  message: string;
+}
+
+const MAX_LOGS_PER_PROJECT = 1000;
+
+/**
+ * Add a log entry for a project.
+ */
+export function addLogEntry(name: string, stream: "stdout" | "stderr", message: string): void {
+  const database = getDb();
+  const timestamp = Date.now();
+  
+  database.run(
+    `INSERT INTO logs (name, stream, timestamp, message) VALUES (?, ?, ?, ?)`,
+    [name, stream, timestamp, message]
+  );
+  
+  // Cleanup old logs to prevent unbounded growth
+  database.run(
+    `DELETE FROM logs WHERE name = ? AND id NOT IN (
+      SELECT id FROM logs WHERE name = ? ORDER BY timestamp DESC LIMIT ?
+    )`,
+    [name, name, MAX_LOGS_PER_PROJECT]
+  );
+}
+
+/**
+ * Get recent logs for a project.
+ */
+export function getProjectLogs(name: string, limit: number = 100): LogEntry[] {
+  const database = getDb();
+  const rows = database.query(
+    `SELECT * FROM logs WHERE name = ? ORDER BY timestamp DESC LIMIT ?`
+  ).all(name, limit) as LogEntry[];
+  
+  // Return in chronological order
+  return rows.reverse();
+}
+
+/**
+ * Get logs for a project since a timestamp.
+ */
+export function getProjectLogsSince(name: string, since: number): LogEntry[] {
+  const database = getDb();
+  const rows = database.query(
+    `SELECT * FROM logs WHERE name = ? AND timestamp > ? ORDER BY timestamp ASC`
+  ).all(name, since) as LogEntry[];
+  
+  return rows;
+}
+
+/**
+ * Clear logs for a project.
+ */
+export function clearProjectLogs(name: string): void {
+  const database = getDb();
+  database.run(`DELETE FROM logs WHERE name = ?`, [name]);
+}
