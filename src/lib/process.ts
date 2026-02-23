@@ -12,8 +12,8 @@ export async function startProject(
 ): Promise<{ port: number; coldStartTime: number }> {
   const currentState = getProjectState(name);
   
-  if (currentState?.status === "running" && currentState.pid) {
-    return { port: currentState.port!, coldStartTime: 0 };
+  if (currentState?.status === "running" && currentState.pid && currentState.port) {
+    return { port: currentState.port, coldStartTime: 0 };
   }
   
   const port = await findAvailablePort(settings);

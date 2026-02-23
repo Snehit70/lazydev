@@ -1,7 +1,8 @@
 import { loadConfig } from "../lib/config";
-import { startProxy } from "../lib/proxy";
-import { startIdleWatcher, setConfigGetter } from "../lib/idle";
+import { startProxy, stopProxy } from "../lib/proxy";
+import { startIdleWatcher, setConfigGetter, stopIdleWatcher } from "../lib/idle";
 import { saveDaemonPid, removeDaemonPid } from "../lib/state";
+import { stopAllProjects } from "../lib/process";
 
 export async function run(port?: number) {
   console.log("Starting LazyDev daemon...\n");
@@ -26,17 +27,17 @@ export async function run(port?: number) {
     
     console.log("\nPress Ctrl+C to stop");
     
-    process.on("SIGINT", () => {
+    const shutdown = async () => {
       console.log("\nStopping...");
+      stopIdleWatcher();
+      stopProxy();
+      await stopAllProjects();
       removeDaemonPid();
       process.exit(0);
-    });
+    };
     
-    process.on("SIGTERM", () => {
-      console.log("\nStopping...");
-      removeDaemonPid();
-      process.exit(0);
-    });
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
     
     await new Promise(() => {});
     

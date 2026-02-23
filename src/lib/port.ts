@@ -1,13 +1,14 @@
 import { $ } from "bun";
 import type { Settings } from "./types";
 
-const PORT_SCAN_CMD = `ss -tlnH 'sport >= :4000 and sport <= :4999' | awk '{print $4}' | cut -d: -f2`;
-
 const usedPorts = new Set<number>();
 
-export async function getUsedPorts(): Promise<Set<number>> {
+export async function getUsedPorts(settings: Settings): Promise<Set<number>> {
+  const [minPort, maxPort] = settings.port_range;
+  const cmd = `ss -tlnH 'sport >= :${minPort} and sport <= :${maxPort}' | awk '{print $4}' | cut -d: -f2`;
+  
   try {
-    const result = await $`sh -c ${PORT_SCAN_CMD}`.quiet().text();
+    const result = await $`sh -c ${cmd}`.quiet().text();
     const ports = result
       .split("\n")
       .map((p) => parseInt(p.trim()))
@@ -20,7 +21,7 @@ export async function getUsedPorts(): Promise<Set<number>> {
 
 export async function findAvailablePort(settings: Settings): Promise<number> {
   const [minPort, maxPort] = settings.port_range;
-  const systemUsed = await getUsedPorts();
+  const systemUsed = await getUsedPorts(settings);
   
   for (let port = minPort; port <= maxPort; port++) {
     if (!systemUsed.has(port) && !usedPorts.has(port)) {
