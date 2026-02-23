@@ -10,6 +10,10 @@ const args = parseArgs({
     all: { type: "boolean", short: "a" },
     json: { type: "boolean", short: "j" },
     follow: { type: "boolean", short: "f" },
+    // Add command options
+    name: { type: "string", short: "n" },
+    cmd: { type: "string", short: "c" },
+    timeout: { type: "string", short: "t" },
   },
   allowPositionals: true,
 });
@@ -32,7 +36,11 @@ async function run() {
       await import("./cli/init").then((m) => m.run());
       break;
     case "add":
-      await import("./cli/add").then((m) => m.run(positionals[0]));
+      await import("./cli/add").then((m) => m.run(positionals[0], {
+        name: args.values.name,
+        cmd: args.values.cmd,
+        timeout: args.values.timeout,
+      }));
       break;
     case "remove":
       await import("./cli/remove").then((m) => m.run(positionals[0]));
@@ -96,6 +104,11 @@ Options:
   -a, --all         Apply to all projects
   -j, --json        Output as JSON
   -f, --follow      Follow logs in real-time
+
+Add Options:
+  -n, --name <name>     Project name (default: directory name)
+  -c, --cmd <command>   Start command (default: auto-detected)
+  -t, --timeout <time>  Idle timeout (default: 10m)
 `);
 }
 
