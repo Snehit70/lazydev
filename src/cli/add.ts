@@ -98,11 +98,11 @@ export async function run(path?: string, options: AddOptions = {}) {
   // Use provided command or auto-detect
   const startCmd = options.cmd ?? detectStartCmd(cwd);
   
-  // Use provided timeout or default
-  const idleTimeout = options.timeout ?? "10m";
+  // Use provided timeout or default; treat empty string as "not provided"
+  const idleTimeout = options.timeout || "10m";
   
   // Validate timeout format (unit required to avoid confusion)
-  if (idleTimeout && !/^\d+(ms|s|m|h)$/.test(idleTimeout)) {
+  if (!/^\d+(ms|s|m|h)$/.test(idleTimeout)) {
     console.error(`Invalid timeout format: "${idleTimeout}". Use format like "10m", "30s", "1h"`);
     process.exit(1);
   }

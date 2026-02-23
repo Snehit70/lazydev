@@ -17,6 +17,12 @@ function pipeOutputToLogs(name: string, proc: Subprocess): void {
     const decoder = new TextDecoder();
     let buffer = "";
     
+    // Cancel reader if process exits while read() is pending (prevents hang)
+    const exitHandler = () => {
+      reader.cancel().catch(() => {});
+    };
+    proc.exited.then(exitHandler).catch(() => {});
+    
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -35,12 +41,17 @@ function pipeOutputToLogs(name: string, proc: Subprocess): void {
         }
       }
       
+      // Flush any bytes buffered inside TextDecoder (incomplete multi-byte sequences)
+      buffer += decoder.decode();
+      
       // Flush remaining buffer
       if (buffer.trim()) {
         addLogEntry(name, streamName, buffer);
       }
     } catch {
       // Stream closed or error
+    } finally {
+      reader.releaseLock();
     }
   };
   
