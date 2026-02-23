@@ -2,6 +2,7 @@ import { spawn, type Subprocess } from "bun";
 import type { ProjectConfig, Settings } from "./types";
 import { setProjectState, getProjectState, setColdStartTime, getAllStates, addLogEntry } from "./state";
 import { findAvailablePort, releasePort, markPortUsed } from "./port";
+import { detectFramework } from "./framework";
 
 const processes = new Map<string, Subprocess>();
 const orphanPids = new Map<string, number>(); // Track PIDs of adopted orphan processes
@@ -94,6 +95,10 @@ export async function startProject(
   });
   console.log(`[Process] State changed: ${name} → starting (port: ${port})`);
   
+  // Detect framework for proper env vars
+  const framework = detectFramework(config.cwd);
+  console.log(`[Process] Detected framework: ${framework.name} (Vite-based: ${framework.isViteBased})`);
+  
   // Expand bun/node to full path (systemd doesn't have user PATH)
   let startCmd = config.start_cmd;
   if (startCmd.startsWith("bun ")) {
@@ -101,19 +106,40 @@ export async function startProject(
     console.log(`[Process] Expanded 'bun' → '${process.execPath}'`);
   }
   
+  const publicOrigin = `http://${name}.localhost`;
+  
   // Environment variables for frameworks
-  const env = {
+  const env: Record<string, string | undefined> = {
     ...process.env,
     PORT: String(port),
-    HOST: "0.0.0.0", // Listen on all interfaces (required for proxy to work)
-    // Nuxt-specific
-    NUXT_HOST: "0.0.0.0",
-    NUXT_PORT: String(port),
-    // Next.js-specific  
-    NEXT_PUBLIC_PORT: String(port),
+    HOST: "0.0.0.0",
     // General
     SERVER_PORT: String(port),
   };
+  
+  // Vite-based frameworks: inject VITE_SERVER_ORIGIN to generate correct URLs
+  // This tells Vite to use the proxy URL (no port) instead of internal port
+  if (framework.isViteBased) {
+    env["VITE_SERVER_ORIGIN"] = publicOrigin;
+    console.log(`[Process] Injecting VITE_SERVER_ORIGIN=${publicOrigin}`);
+  }
+  
+  // Framework-specific env vars
+  switch (framework.type) {
+    case "nuxt":
+      env["NUXT_HOST"] = "0.0.0.0";
+      env["NUXT_PORT"] = String(port);
+      break;
+    case "next":
+      env["NEXT_PUBLIC_PORT"] = String(port);
+      break;
+    case "sveltekit":
+      // SvelteKit uses Vite, so VITE_SERVER_ORIGIN handles it
+      break;
+    case "astro":
+      // Astro uses Vite, so VITE_SERVER_ORIGIN handles it
+      break;
+  }
   
   console.log(`[Process] Spawning process:`);
   console.log(`[Process]   cwd: ${config.cwd}`);

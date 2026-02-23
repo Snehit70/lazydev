@@ -32,10 +32,11 @@ async function proxyRequest(
   targetPort: number
 ): Promise<Response> {
   const url = new URL(req.url);
+  // Change hostname to localhost and port to target (server listens on localhost:port, not subdomain.localhost:port)
+  url.hostname = "localhost";
   url.port = String(targetPort);
   
   const proxyHeaders = new Headers(req.headers);
-  // Keep Accept-Encoding for compression support
   proxyHeaders.set("Host", `localhost:${targetPort}`);
   
   const proxyReq = new Request(url.toString(), {
