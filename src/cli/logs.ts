@@ -1,6 +1,5 @@
 import { loadConfig } from "../lib/config";
-import { getProcessOutput } from "../lib/process";
-import { getProjectState } from "../lib/state";
+import { getProjectState, getProjectLogs, getProjectLogsSince, type LogEntry } from "../lib/state";
 
 export async function run(name?: string, follow: boolean = false) {
   try {
@@ -14,6 +13,7 @@ export async function run(name?: string, follow: boolean = false) {
     if (name) {
       await showProjectLogs(name, follow);
     } else {
+      // Show logs for all projects
       const projects = Object.keys(config.projects);
       if (projects.length === 0) {
         console.log("No projects configured.");
@@ -21,11 +21,15 @@ export async function run(name?: string, follow: boolean = false) {
       }
       
       for (const project of projects) {
-        const state = getProjectState(project);
-        if (state?.status === "running") {
+        const logs = getProjectLogs(project, 50);
+        if (logs.length > 0) {
           console.log(`\n=== ${project} ===`);
-          await showProjectLogs(project, false);
+          printLogs(logs);
         }
+      }
+      
+      if (projects.every(p => getProjectLogs(p, 1).length === 0)) {
+        console.log("No logs available. Start some projects first.");
       }
     }
   } catch (err: unknown) {
@@ -35,81 +39,80 @@ export async function run(name?: string, follow: boolean = false) {
   }
 }
 
-async function showProjectLogs(name: string, follow: boolean): Promise<void> {
-  const state = getProjectState(name);
-  
-  if (state?.status !== "running") {
-    console.log(`Project "${name}" is not running.`);
-    return;
+function formatTimestamp(ts: number): string {
+  return new Date(ts).toLocaleTimeString();
+}
+
+function printLogs(logs: LogEntry[]): void {
+  for (const log of logs) {
+    const time = formatTimestamp(log.timestamp);
+    const prefix = log.stream === "stderr" ? "err" : "out";
+    console.log(`[${time}] [${prefix}] ${log.message}`);
   }
+}
+
+async function showProjectLogs(name: string, follow: boolean): Promise<void> {
+  // Show recent logs first
+  const recentLogs = getProjectLogs(name, 100);
   
-  const output = getProcessOutput(name);
-  if (!output) {
-    console.log(`No process output available for "${name}".`);
-    return;
+  if (recentLogs.length === 0) {
+    const state = getProjectState(name);
+    if (state?.status !== "running") {
+      console.log(`Project "${name}" is not running and has no logs.`);
+    } else {
+      console.log(`No logs yet for "${name}".`);
+    }
+    
+    if (!follow) {
+      return;
+    }
+  } else {
+    printLogs(recentLogs);
   }
   
   if (follow) {
-    console.log(`Following logs for ${name} (Ctrl+C to stop)...\n`);
+    const state = getProjectState(name);
+    if (state?.status !== "running") {
+      console.log(`\nProject "${name}" is not running. Cannot follow logs.`);
+      return;
+    }
     
-    const stdoutReader = output.stdout.getReader() as ReadableStreamDefaultReader<Uint8Array>;
-    const stderrReader = output.stderr.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    console.log(`\nFollowing logs for ${name} (Ctrl+C to stop)...\n`);
     
-    const readStream = async (reader: ReadableStreamDefaultReader<Uint8Array>, prefix: string) => {
-      while (true) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = new TextDecoder().decode(value);
-          process.stdout.write(`[${prefix}] ${text}`);
-        } catch {
-          break;
-        }
+    // Poll for new logs
+    let lastTimestamp = recentLogs.length > 0 
+      ? recentLogs[recentLogs.length - 1]!.timestamp 
+      : Date.now();
+    
+    const pollInterval = 500;
+    
+    const pollLogs = () => {
+      const newLogs = getProjectLogsSince(name, lastTimestamp);
+      
+      if (newLogs.length > 0) {
+        printLogs(newLogs);
+        lastTimestamp = newLogs[newLogs.length - 1]!.timestamp;
+      }
+      
+      // Check if project is still running
+      const currentState = getProjectState(name);
+      if (currentState?.status !== "running") {
+        console.log(`\nProject "${name}" stopped.`);
+        process.exit(0);
       }
     };
     
-    await Promise.all([
-      readStream(stdoutReader, "out"),
-      readStream(stderrReader, "err"),
-    ]);
-  } else {
-    const readAvailable = async (stream: ReadableStream, prefix: string, timeout: number = 1000) => {
-      const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
-      const chunks: string[] = [];
-      const deadline = Date.now() + timeout;
-      
-      try {
-        while (Date.now() < deadline) {
-          const result = await Promise.race([
-            reader.read(),
-            new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => 
-              setTimeout(() => reject(new Error("timeout")), Math.max(0, deadline - Date.now()))
-            ),
-          ]);
-          
-          if (result.done || !result.value) break;
-          chunks.push(new TextDecoder().decode(result.value));
-        }
-      } catch {
-        // Timeout or other error - just use what we have
-      } finally {
-        reader.releaseLock();
-      }
-      
-      const text = chunks.join("");
-      if (text) {
-        const lines = text.split("\n").slice(-50);
-        for (const line of lines) {
-          if (line.trim()) {
-            console.log(`[${prefix}] ${line}`);
-          }
-        }
-      }
-    };
+    // Set up polling
+    const intervalId = setInterval(pollLogs, pollInterval);
     
-    await Promise.all([
-      readAvailable(output.stdout, "out"),
-      readAvailable(output.stderr, "err"),
-    ]);
+    // Handle Ctrl+C
+    process.on("SIGINT", () => {
+      clearInterval(intervalId);
+      console.log("\nStopped following logs.");
+      process.exit(0);
+    });
+    
+    // Keep running
+    await new Promise(() => {});
   }
 }
