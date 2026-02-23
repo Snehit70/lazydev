@@ -7,6 +7,19 @@ export interface ProjectConfig {
   aliases?: string[];
 }
 
+/**
+ * Raw project config as parsed from YAML (before duration conversion).
+ * idle_timeout can be a string like "10m" or a number in milliseconds.
+ */
+export interface RawProjectConfig {
+  name?: string;
+  cwd: string;
+  start_cmd: string;
+  idle_timeout?: number | string;
+  disabled?: boolean;
+  aliases?: string[];
+}
+
 export interface Settings {
   proxy_port: number;
   idle_timeout: number;

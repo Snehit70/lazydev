@@ -2,7 +2,12 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, basename } from "path";
 import { parse, stringify } from "yaml";
-import type { Config } from "../lib/types";
+import type { RawProjectConfig } from "../lib/types";
+
+interface RawConfig {
+  settings?: Record<string, unknown>;
+  projects: Record<string, RawProjectConfig>;
+}
 import { expandTilde } from "../lib/config";
 
 const HOME = homedir();
@@ -79,8 +84,14 @@ export async function run(path?: string, options: AddOptions = {}) {
   }
   
   // Use provided name or derive from directory
-  const defaultName = basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+  const derivedName = basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+  const defaultName = derivedName || "project"; // Fallback if directory name is all non-alphanumeric
   const name = options.name ?? defaultName;
+  
+  if (!name) {
+    console.error("Could not derive project name from directory. Please use --name flag.");
+    process.exit(1);
+  }
   
   const validationError = validateName(name);
   if (validationError) {
@@ -98,7 +109,7 @@ export async function run(path?: string, options: AddOptions = {}) {
     ? readFileSync(CONFIG_PATH, "utf-8") 
     : "settings:\n  proxy_port: 80\n  idle_timeout: 10m\nprojects:\n";
   
-  const config = parse(configContent) as Config;
+  const config = parse(configContent) as RawConfig;
   
   if (!config.projects) {
     config.projects = {};
@@ -113,7 +124,7 @@ export async function run(path?: string, options: AddOptions = {}) {
     name,
     cwd,
     start_cmd: startCmd,
-    idle_timeout: idleTimeout as unknown as number, // Will be parsed by parseDuration
+    idle_timeout: idleTimeout, // String like "10m", parsed by loadConfig()
   };
   
   writeFileSync(CONFIG_PATH, stringify(config));
