@@ -4,12 +4,17 @@ import { startIdleWatcher, setConfigGetter, stopIdleWatcher } from "../lib/idle"
 import { saveDaemonPid, removeDaemonPid } from "../lib/state";
 import { stopAllProjects, reconcileOrphanProcesses } from "../lib/process";
 import { initializePortsFromState } from "../lib/port";
-import { startService, getServiceStatus } from "../lib/systemd";
+import { startService, getServiceStatus, isSystemdAvailable } from "../lib/systemd";
 import type { Config } from "../lib/types";
 
 export async function run(port?: number, foreground: boolean = false) {
-  // If not foreground mode, manage via systemd
   if (!foreground) {
+    if (!isSystemdAvailable()) {
+      console.error("Error: systemd is not available on this system.");
+      console.error("Run 'lazydev start --foreground' to start the daemon directly.");
+      process.exit(1);
+    }
+    
     if (port) {
       console.warn("Warning: --port flag is ignored when using systemd mode.");
       console.warn("         Modify ~/.config/lazydev/config.yaml to change the port.");
@@ -37,12 +42,7 @@ export async function run(port?: number, foreground: boolean = false) {
       console.log("  lazydev logs      - View daemon logs");
       console.log("  lazydev stop      - Stop the daemon");
     } else {
-      if (result.message.includes("systemd is not available")) {
-        console.error("Error:", result.message);
-        console.error("Run 'lazydev start --foreground' to start the daemon directly.");
-      } else {
-        console.error("Failed to start service:", result.message);
-      }
+      console.error("Failed to start service:", result.message);
       process.exit(1);
     }
     return;

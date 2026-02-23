@@ -128,14 +128,29 @@ export async function stopService(): Promise<{ success: boolean; message: string
     return { success: false, message: "systemd is not available on this system" };
   }
   
+  if (!isServiceInstalled()) {
+    return { success: true, message: "Service is not installed" };
+  }
+  
+  const errors: string[] = [];
+  
   try {
     await $`systemctl --user stop lazydev`.quiet();
-    await $`systemctl --user disable lazydev`.quiet();
-    return { success: true, message: "Service stopped and disabled" };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, message };
+    errors.push(`stop: ${err instanceof Error ? err.message : String(err)}`);
   }
+  
+  try {
+    await $`systemctl --user disable lazydev`.quiet();
+  } catch (err) {
+    errors.push(`disable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  
+  if (errors.length > 0) {
+    return { success: false, message: errors.join("; ") };
+  }
+  
+  return { success: true, message: "Service stopped and disabled" };
 }
 
 export async function restartService(): Promise<{ success: boolean; message: string }> {
@@ -184,7 +199,8 @@ export async function getServiceLogs(lines: number = 100): Promise<string> {
   try {
     const result = await $`journalctl --user -u lazydev -n ${String(lines)} --no-pager`.quiet().text();
     return result;
-  } catch {
+  } catch (err) {
+    console.debug(`getServiceLogs failed: ${err instanceof Error ? err.message : String(err)}`);
     return "";
   }
 }
