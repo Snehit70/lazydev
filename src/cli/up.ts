@@ -31,7 +31,7 @@ export async function run(name?: string) {
     
     console.log(`Starting ${name}...`);
     
-    const port = await startProject(name, project, config.settings);
+    const { port } = await startProject(name, project, config.settings);
     
     console.log(`✓ Started ${name} on port ${port}`);
     console.log(`  Access at: http://${name}.localhost`);
