@@ -101,8 +101,8 @@ export async function run(path?: string, options: AddOptions = {}) {
   // Use provided timeout or default
   const idleTimeout = options.timeout ?? "10m";
   
-  // Validate timeout format
-  if (idleTimeout && !/^\d+(ms|s|m|h)?$/.test(idleTimeout)) {
+  // Validate timeout format (unit required to avoid confusion)
+  if (idleTimeout && !/^\d+(ms|s|m|h)$/.test(idleTimeout)) {
     console.error(`Invalid timeout format: "${idleTimeout}". Use format like "10m", "30s", "1h"`);
     process.exit(1);
   }

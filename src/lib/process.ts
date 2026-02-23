@@ -321,9 +321,19 @@ export async function reconcileOrphanProcesses(): Promise<{ adopted: number; cle
     // Handle stale "starting" state (daemon crashed during startup)
     if (state.status === "starting") {
       if (state.pid) {
-        // Try to kill any lingering process
+        // Kill any lingering process with graceful escalation
         try {
           process.kill(state.pid, "SIGTERM");
+          const exited = await waitForProcessExit(state.pid, GRACEFUL_SHUTDOWN_TIMEOUT);
+          
+          if (!exited) {
+            try {
+              process.kill(state.pid, "SIGKILL");
+            } catch {
+              // Already dead
+            }
+            await waitForProcessExit(state.pid, 1000);
+          }
         } catch {
           // Process already dead
         }
