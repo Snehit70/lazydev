@@ -57,6 +57,7 @@ export async function startProject(
       started_at: Date.now(),
     });
   } else {
+    proc.kill();
     processes.delete(name);
     releasePort(port);
     setProjectState(name, {
@@ -156,4 +157,9 @@ export function getProcessOutput(name: string): { stdout: ReadableStream; stderr
     stdout: proc.stdout as ReadableStream,
     stderr: proc.stderr as ReadableStream,
   };
+}
+
+export async function stopAllProjects(): Promise<void> {
+  const names = Array.from(processes.keys());
+  await Promise.all(names.map((name) => stopProject(name)));
 }

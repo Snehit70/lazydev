@@ -61,39 +61,43 @@ export function startIdleWatcher(settings: Settings): void {
     clearInterval(intervalId);
   }
   
-  intervalId = setInterval(() => {
-    const states = getAllStates();
-    const now = Date.now();
-    const configs = configGetter?.() ?? {};
-    
-    for (const [name, state] of Object.entries(states)) {
-      if (state.status !== "running") continue;
+  intervalId = setInterval(async () => {
+    try {
+      const states = getAllStates();
+      const now = Date.now();
+      const configs = configGetter?.() ?? {};
       
-      const projectConfig = configs[name];
-      if (projectConfig?.disabled) continue;
-      
-      if (state.websocket_connections > 0) {
-        updateActivity(name);
-        continue;
+      for (const [name, state] of Object.entries(states)) {
+        if (state.status !== "running") continue;
+        
+        const projectConfig = configs[name];
+        if (projectConfig?.disabled) continue;
+        
+        if (state.websocket_connections > 0) {
+          updateActivity(name);
+          continue;
+        }
+        
+        if (!state.last_activity) continue;
+        
+        if (projectConfig?.idle_timeout === 0) continue;
+        
+        const idleTime = now - state.last_activity;
+        const timeout = projectConfig?.idle_timeout !== undefined 
+          ? projectConfig.idle_timeout 
+          : calculateDynamicTimeout(state, settings);
+        
+        if (idleTime >= timeout) {
+          const metrics = getProjectMetrics(name);
+          const coldStartSec = Math.round((metrics.cold_start_time ?? 0) / 1000);
+          console.log(
+            `[IdleWatcher] Stopping ${name} (idle ${Math.round(idleTime / 60000)}m, cold start: ${coldStartSec}s)`
+          );
+          await stopProject(name);
+        }
       }
-      
-      if (!state.last_activity) continue;
-      
-      if (projectConfig?.idle_timeout === 0) continue;
-      
-      const idleTime = now - state.last_activity;
-      const timeout = projectConfig?.idle_timeout !== undefined 
-        ? projectConfig.idle_timeout 
-        : calculateDynamicTimeout(state, settings);
-      
-      if (idleTime >= timeout) {
-        const metrics = getProjectMetrics(name);
-        const coldStartSec = Math.round((metrics.cold_start_time ?? 0) / 1000);
-        console.log(
-          `[IdleWatcher] Stopping ${name} (idle ${Math.round(idleTime / 60000)}m, cold start: ${coldStartSec}s)`
-        );
-        stopProject(name);
-      }
+    } catch (err) {
+      console.error("[IdleWatcher] Error:", err instanceof Error ? err.message : String(err));
     }
   }, settings.scan_interval);
 }
