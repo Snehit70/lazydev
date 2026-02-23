@@ -1,10 +1,13 @@
 import { parse } from "yaml";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, watch, type FSWatcher } from "fs";
 import { homedir } from "os";
 import type { Config, Settings, ProjectConfig } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
 const CONFIG_PATH = "~/.config/lazydev/config.yaml";
+
+let configWatcher: FSWatcher | null = null;
+let onConfigChangeCallback: ((config: Config) => void) | null = null;
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
@@ -109,4 +112,63 @@ export function validateConfig(config: Config): string[] {
   }
   
   return errors;
+}
+
+/**
+ * Watch config file for changes and call the callback with new config.
+ * Debounces rapid changes (e.g., editor save events).
+ */
+export function watchConfig(
+  path: string = CONFIG_PATH,
+  onChange: (config: Config) => void
+): void {
+  const configPath = expandTilde(path);
+  
+  if (configWatcher) {
+    configWatcher.close();
+  }
+  
+  onConfigChangeCallback = onChange;
+  
+  let debounceTimer: Timer | null = null;
+  
+  configWatcher = watch(configPath, (eventType) => {
+    if (eventType !== "change") return;
+    
+    // Debounce to avoid multiple reloads on rapid saves
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    
+    debounceTimer = setTimeout(() => {
+      try {
+        const newConfig = loadConfig(path);
+        const errors = validateConfig(newConfig);
+        
+        if (errors.length > 0) {
+          console.error("[Config] Validation errors:", errors.join(", "));
+          return;
+        }
+        
+        console.log("[Config] Reloaded configuration");
+        onConfigChangeCallback?.(newConfig);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[Config] Failed to reload:", message);
+      }
+    }, 500);
+  });
+  
+  console.log(`[Config] Watching for changes: ${configPath}`);
+}
+
+/**
+ * Stop watching config file.
+ */
+export function stopWatchingConfig(): void {
+  if (configWatcher) {
+    configWatcher.close();
+    configWatcher = null;
+  }
+  onConfigChangeCallback = null;
 }
