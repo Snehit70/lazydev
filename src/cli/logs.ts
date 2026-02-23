@@ -91,6 +91,7 @@ async function showProjectLogs(name: string, follow: boolean, lines: number): Pr
       
       const currentState = getProjectState(name);
       if (currentState?.status !== "running") {
+        clearInterval(intervalId);
         console.log(`\nProject "${name}" stopped.`);
         process.exit(0);
       }

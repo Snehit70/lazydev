@@ -37,7 +37,12 @@ export async function run(port?: number, foreground: boolean = false) {
       console.log("  lazydev logs      - View daemon logs");
       console.log("  lazydev stop      - Stop the daemon");
     } else {
-      console.error("Failed to start service:", result.message);
+      if (result.message.includes("systemd is not available")) {
+        console.error("Error:", result.message);
+        console.error("Run 'lazydev start --foreground' to start the daemon directly.");
+      } else {
+        console.error("Failed to start service:", result.message);
+      }
       process.exit(1);
     }
     return;

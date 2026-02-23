@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { $ } from "bun";
@@ -11,44 +11,12 @@ export function isSystemdAvailable(): boolean {
   return platform() === "linux" && existsSync("/run/systemd/system");
 }
 
-const SERVICE_TEMPLATE = `[Unit]
-Description=LazyDev - Scale-to-zero dev server manager
-After=network.target dnsmasq.service
-
-[Service]
-Type=simple
-ExecStart=%BUN_PATH% run %LAZYDEV_PATH% start --foreground
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
-`;
-
 function escapeSystemdPercent(str: string): string {
   return str.replace(/%/g, "%%");
 }
 
 function getBunPath(): string {
-  if (process.execPath) {
-    return process.execPath;
-  }
-  
-  const candidates = [
-    join(HOME, ".bun/bin/bun"),
-    "/usr/local/bin/bun",
-    "/usr/bin/bun",
-  ];
-  
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  
-  return "bun";
+  return process.execPath;
 }
 
 function getLazydevPath(): string {
@@ -85,14 +53,35 @@ export async function installService(): Promise<void> {
     mkdirSync(SYSTEMD_DIR, { recursive: true });
   }
   
-  const bunPath = escapeSystemdPercent(getBunPath());
-  const lazydevPath = escapeSystemdPercent(getLazydevPath());
+  const lazydevPath = getLazydevPath();
+  const lazydevExt = lazydevPath.endsWith(".js") || lazydevPath.endsWith(".ts");
   
-  const serviceContent = SERVICE_TEMPLATE
-    .replace("%BUN_PATH%", bunPath)
-    .replace("%LAZYDEV_PATH%", lazydevPath);
+  let execStart: string;
+  if (lazydevExt) {
+    const bunPath = escapeSystemdPercent(getBunPath());
+    const escapedPath = escapeSystemdPercent(lazydevPath);
+    execStart = `${bunPath} ${escapedPath} start --foreground`;
+  } else {
+    execStart = `${escapeSystemdPercent(lazydevPath)} start --foreground`;
+  }
   
-  writeFileSync(SERVICE_PATH, serviceContent);
+  const serviceContent = `[Unit]
+Description=LazyDev - Scale-to-zero dev server manager
+After=network.target dnsmasq.service
+
+[Service]
+Type=simple
+ExecStart=${execStart}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+`;
+  
+  await Bun.write(SERVICE_PATH, serviceContent);
   
   await $`systemctl --user daemon-reload`.quiet();
 }
@@ -187,7 +176,7 @@ export async function getServiceStatus(): Promise<{ active: boolean; enabled: bo
   return { active, enabled };
 }
 
-export async function getServiceLogs(lines: number = 50): Promise<string> {
+export async function getServiceLogs(lines: number = 100): Promise<string> {
   if (!isSystemdAvailable()) {
     return "";
   }
