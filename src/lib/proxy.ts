@@ -71,15 +71,21 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const subdomainRaw = host.split(".localhost")[0];
       const subdomain = subdomainRaw?.toLowerCase() ?? "";
       
+      console.log(`[Proxy] ${req.method} ${host} → subdomain: "${subdomain}"`);
+      
       if (!subdomain || !nameToConfig.has(subdomain)) {
+        console.log(`[Proxy] Project not found: "${subdomain}"`);
         return new Response("Project not found", { status: 404 });
       }
       
       const projectConfig = nameToConfig.get(subdomain)!;
       const projectName = projectConfig.name;
       
+      let state = getProjectState(projectName);
+      console.log(`[Proxy] Project: ${projectName} (status: ${state?.status ?? "none"}, port: ${state?.port ?? "none"})`);
+      
       if (req.headers.get("upgrade") === "websocket") {
-        let state = getProjectState(projectName);
+        console.log(`[Proxy] WebSocket upgrade request`);
         
         // Cold start for WebSocket connections
         if (state?.status !== "running" || !state.port) {
@@ -93,6 +99,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
             state = getProjectState(projectName);
           } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to start server";
+            console.log(`[Proxy] Failed to start: ${message}`);
             return new Response(message, { status: 503 });
           }
         }
@@ -112,19 +119,24 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           : new Response("WebSocket upgrade failed", { status: 500 });
       }
       
-      const state = getProjectState(projectName);
-      
+      // HTTP request
       if (state?.status === "running" && state.port) {
+        console.log(`[Proxy] Checking health: localhost:${state.port}`);
         if (await checkHealth(state.port)) {
+          console.log(`[Proxy] Proxying to running server: localhost:${state.port}`);
           updateActivity(projectName);
           return proxyRequest(req, state.port);
         }
+        console.log(`[Proxy] Health check failed, restarting`);
       }
       
+      // Cold start
+      console.log(`[Proxy] Cold start required for: ${projectName}`);
       const { port } = await startProject(projectName, projectConfig, cfg.settings);
       
       markPortUsed(port);
       updateActivity(projectName);
+      console.log(`[Proxy] Proxying to: localhost:${port}`);
       return proxyRequest(req, port);
     },
     
