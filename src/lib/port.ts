@@ -1,7 +1,33 @@
 import { $ } from "bun";
 import type { Settings } from "./types";
+import { getAllStates } from "./state";
 
 const usedPorts = new Set<number>();
+let initialized = false;
+
+/**
+ * Initialize port tracking from DB state.
+ * Call this on daemon startup to sync in-memory Set with persisted state.
+ */
+export function initializePortsFromState(): void {
+  if (initialized) return;
+  
+  const states = getAllStates();
+  for (const state of Object.values(states)) {
+    if (state.port !== null && state.status === "running") {
+      usedPorts.add(state.port);
+    }
+  }
+  initialized = true;
+}
+
+/**
+ * Reset port tracking (for testing or restart scenarios)
+ */
+export function resetPortTracking(): void {
+  usedPorts.clear();
+  initialized = false;
+}
 
 export async function getUsedPorts(settings: Settings): Promise<Set<number>> {
   const [minPort, maxPort] = settings.port_range;
