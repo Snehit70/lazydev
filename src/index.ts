@@ -18,6 +18,8 @@ const args = parseArgs({
     yes: { type: "boolean", short: "y" },
     // Start options
     foreground: { type: "boolean", short: "F" },
+    // Completions options
+    shell: { type: "string" },
   },
   allowPositionals: true,
 });
@@ -81,6 +83,9 @@ async function run() {
         args.values.lines ? Math.max(1, parseInt(args.values.lines) || 100) : 100
       ));
       break;
+    case "completions":
+      await import("./cli/completions").then((m) => m.run(args.values.shell));
+      break;
     default:
       console.error(`Unknown command: ${command}`);
       showHelp();
@@ -109,6 +114,7 @@ Commands:
   logs              Show daemon logs
   logs <name>       Show project logs
   logs -f           Follow logs in real-time
+  completions       Install shell completions
 
 Options:
   -h, --help        Show this help
@@ -125,6 +131,9 @@ Add Options:
   -c, --cmd <cmd>       Start command (default: auto-detected)
   -t, --timeout <t>     Idle timeout (default: 10m)
   -y, --yes             Skip interactive prompts
+
+Completions Options:
+  --shell <shell>   Shell to install for (bash, zsh, fish)
 `);
 }
 
