@@ -38,7 +38,8 @@ function detectStartCmd(cwd: string): string {
   }
   
   if (existsSync(join(cwd, "requirements.txt")) || existsSync(join(cwd, "pyproject.toml"))) {
-    return "python -m uvicorn main:app --reload";
+    // Generic Python - user should override with --cmd if needed
+    return "python main.py";
   }
   
   return "bun dev";
@@ -87,11 +88,6 @@ export async function run(path?: string, options: AddOptions = {}) {
   const derivedName = basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   const defaultName = derivedName || "project"; // Fallback if directory name is all non-alphanumeric
   const name = options.name ?? defaultName;
-  
-  if (!name) {
-    console.error("Could not derive project name from directory. Please use --name flag.");
-    process.exit(1);
-  }
   
   const validationError = validateName(name);
   if (validationError) {

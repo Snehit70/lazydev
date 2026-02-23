@@ -8,6 +8,7 @@ const CONFIG_PATH = "~/.config/lazydev/config.yaml";
 
 let configWatcher: FSWatcher | null = null;
 let onConfigChangeCallback: ((config: Config) => void) | null = null;
+let debounceTimer: Timer | null = null;
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
@@ -130,8 +131,6 @@ export function watchConfig(
   
   onConfigChangeCallback = onChange;
   
-  let debounceTimer: Timer | null = null;
-  
   configWatcher = watch(configPath, (eventType) => {
     if (eventType !== "change") return;
     
@@ -166,6 +165,10 @@ export function watchConfig(
  * Stop watching config file.
  */
 export function stopWatchingConfig(): void {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
   if (configWatcher) {
     configWatcher.close();
     configWatcher = null;
