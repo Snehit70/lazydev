@@ -123,8 +123,8 @@ export async function run(path?: string, options: AddOptions = {}) {
 	let startCmd = options.cmd ?? defaultCmd;
 	let idleTimeout = options.timeout || defaultTimeout;
 	
-	// Interactive mode
-	if (!options.nonInteractive && !options.name && !options.cmd && !options.timeout) {
+	// Interactive mode - prompt if any required field missing
+	if (!options.nonInteractive && !(options.name && options.cmd)) {
 		console.log(`\n  Directory: ${cwd}`);
 		if (framework.type !== "unknown") {
 			console.log(`  Framework: ${framework.name}`);

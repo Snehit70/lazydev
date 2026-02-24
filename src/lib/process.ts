@@ -112,9 +112,9 @@ export async function startProject(
   const env: Record<string, string | undefined> = {
     ...process.env,
     PORT: String(port),
-    HOST: "0.0.0.0",
-    // General
+    HOST: "127.0.0.1",
     SERVER_PORT: String(port),
+    LAZYDEV_STATE_DIR: process.env["LAZYDEV_STATE_DIR"],
   };
   
   // Vite-based frameworks: inject VITE_SERVER_ORIGIN to generate correct URLs
@@ -127,7 +127,7 @@ export async function startProject(
   // Framework-specific env vars
   switch (framework.type) {
     case "nuxt":
-      env["NUXT_HOST"] = "0.0.0.0";
+      env["NUXT_HOST"] = "127.0.0.1";
       env["NUXT_PORT"] = String(port);
       break;
     case "next":
@@ -144,7 +144,7 @@ export async function startProject(
   console.log(`[Process] Spawning process:`);
   console.log(`[Process]   cwd: ${config.cwd}`);
   console.log(`[Process]   cmd: ${startCmd}`);
-  console.log(`[Process]   env: PORT=${port}, HOST=0.0.0.0`);
+  console.log(`[Process]   env: PORT=${port}, HOST=127.0.0.1`);
   
   const startTime = Date.now();
   
