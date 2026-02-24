@@ -4,6 +4,30 @@ import { getProjectState, updateActivity, incrementWebSockets, decrementWebSocke
 import { startProject, checkHealth } from "./process";
 import { markPortUsed } from "./port";
 
+/**
+ * Retry health check with exponential backoff.
+ * Used when a project is marked "running" but fails initial health check
+ * (e.g., Nuxt/Vite still warming up internal routes after responding to /).
+ */
+async function waitForHealthyWithBackoff(port: number, maxWaitMs: number): Promise<boolean> {
+  const start = Date.now();
+  let delay = 100;
+  let attempt = 0;
+  
+  while (Date.now() - start < maxWaitMs) {
+    attempt++;
+    if (await checkHealth(port)) {
+      console.log(`[Proxy] Warmup health check passed (attempt ${attempt})`);
+      return true;
+    }
+    console.log(`[Proxy] Warmup health check failed (attempt ${attempt}, next delay: ${delay}ms)`);
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 1.5, 1000); // Cap at 1s
+  }
+  
+  return false;
+}
+
 interface WebSocketData {
   projectName: string;
   targetPort: number;
@@ -128,7 +152,19 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           updateActivity(projectName);
           return proxyRequest(req, state.port);
         }
-        console.log(`[Proxy] Health check failed, restarting`);
+        
+        // Health check failed but process state is "running" - likely still warming up
+        // (e.g., Nuxt/Vite responds to / but internal routes not ready yet)
+        // Retry with backoff before triggering a restart
+        console.log(`[Proxy] Health check failed, server may be warming up...`);
+        const warmedUp = await waitForHealthyWithBackoff(state.port, 5000);
+        if (warmedUp) {
+          console.log(`[Proxy] Proxying after warmup: localhost:${state.port}`);
+          updateActivity(projectName);
+          return proxyRequest(req, state.port);
+        }
+        
+        console.log(`[Proxy] Server unresponsive after warmup retries, will restart`);
       }
       
       // Cold start
