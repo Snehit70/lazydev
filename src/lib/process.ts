@@ -223,18 +223,16 @@ export async function startProject(
   console.log(`[Process] Verifying HTTP health (signal: ${signalDetected ? "detected" : "not detected"})`);
   const healthy = await waitForHealthy(port, settings, name);
   
-  // Extra stabilization: wait a bit and re-check to ensure server doesn't crash
-  // under load (prevents Nuxt restart cascade from early parallel requests)
+  // Warm up Vite dev server to prime lazy-compiled routes
+  // This prevents browser parallel requests from overwhelming the server
+  let warmedUp = false;
   if (healthy) {
-    await new Promise((r) => setTimeout(r, 500));
-    const stableCheck = await checkHealth(port, 2000);
-    if (!stableCheck) {
-      console.log(`[Process] Server became unhealthy after stabilization wait, retrying...`);
-      // Give it one more chance
-      const retry = await waitForHealthy(port, settings, name);
-      if (!retry) {
-        console.log(`[Process] Server failed stability check`);
-      }
+    console.log(`[Process] Warming up ${framework.type} dev server...`);
+    warmedUp = await warmupServer(port, framework.type, 15000);
+    if (warmedUp) {
+      console.log(`[Process] Dev server warmed up successfully`);
+    } else {
+      console.log(`[Process] Warmup had issues, proceeding anyway`);
     }
   }
   
@@ -371,6 +369,65 @@ export async function checkHealth(port: number, timeout: number = 1000): Promise
   } catch {
     return false;
   }
+}
+
+/**
+ * Warm up Vite dev server by making requests that trigger compilation.
+ * Nuxt/Vite lazily compile routes on first access. Browser sends many
+ * parallel requests which can overwhelm the server and cause ECONNRESET.
+ * This function makes sequential warmup requests to prime the cache.
+ */
+export async function warmupServer(
+  port: number,
+  frameworkType: string,
+  timeout: number = 30000
+): Promise<boolean> {
+  const startTime = Date.now();
+  
+  // For Nuxt, make requests to common entry points to trigger compilation
+  // We do this sequentially to avoid overwhelming the server
+  const warmupPaths = frameworkType === "nuxt"
+    ? ["/", "/_nuxt/entry.module.js"]
+    : ["/"];
+  
+  for (const path of warmupPaths) {
+    if (Date.now() - startTime > timeout) {
+      console.log(`[Warmup] Timeout reached`);
+      return false;
+    }
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      console.log(`[Warmup] Requesting http://localhost:${port}${path}`);
+      const res = await fetch(`http://localhost:${port}${path}`, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          "Accept": "*/*",
+        },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // Don't care about status, just that the request completed
+      // 404 is fine - we're just triggering Vite compilation
+      console.log(`[Warmup] http://localhost:${port}${path} → ${res.status}`);
+      
+      // Small delay between warmup requests to let Vite process
+      await new Promise((r) => setTimeout(r, 100));
+    } catch (err) {
+      // Connection errors during warmup are expected for lazy routes
+      // Log but continue - the main health check already passed
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(`[Warmup] http://localhost:${port}${path} → ${message}`);
+    }
+  }
+  
+  // Final check - wait for server to be stable
+  await new Promise((r) => setTimeout(r, 500));
+  return await checkHealth(port, 2000);
 }
 
 export async function waitForHealthy(
