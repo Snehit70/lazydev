@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { installCompletions, getShell } from "../lib/completions";
 
 const HOME = homedir();
 const CONFIG_DIR = join(HOME, ".config/lazydev");
@@ -68,6 +69,18 @@ export async function run() {
   console.log("\nRun:");
   console.log("  sudo setcap 'cap_net_bind_service=+ep' $(which bun)");
   console.log("\nThis allows bun to bind to privileged ports without sudo.");
+  
+  console.log("\n--- Shell Completions ---");
+  const shell = getShell();
+  if (shell) {
+    const result = installCompletions(shell);
+    console.log(result.message);
+  } else {
+    console.log("Could not detect shell. Install completions manually:");
+    console.log("  lazydev completions --shell bash");
+    console.log("  lazydev completions --shell zsh");
+    console.log("  lazydev completions --shell fish");
+  }
   
   console.log("\n--- Done ---");
   console.log("Next steps:");

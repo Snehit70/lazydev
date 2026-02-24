@@ -2,6 +2,7 @@ import { spawn, type Subprocess } from "bun";
 import type { ProjectConfig, Settings } from "./types";
 import { setProjectState, getProjectState, setColdStartTime, getAllStates, addLogEntry } from "./state";
 import { findAvailablePort, releasePort, markPortUsed } from "./port";
+import { detectFramework } from "./framework";
 
 const processes = new Map<string, Subprocess>();
 const orphanPids = new Map<string, number>(); // Track PIDs of adopted orphan processes
@@ -65,23 +66,24 @@ export async function startProject(
   config: ProjectConfig,
   settings: Settings
 ): Promise<{ port: number; coldStartTime: number }> {
-  const currentState = getProjectState(name);
+  console.log(`[Process] Starting project: ${name}`);
   
-  // Check if already running (either managed or orphan)
+  const currentState = getProjectState(name);
+  console.log(`[Process] Current state: ${currentState?.status ?? "none"} (port: ${currentState?.port ?? "none"}, pid: ${currentState?.pid ?? "none"})`);
+  
   if (currentState?.status === "running" && currentState.pid && currentState.port) {
-    // Verify the process is actually alive
     const isAlive = await isProcessRunning(currentState.pid);
     if (isAlive) {
+      console.log(`[Process] Project ${name} already running (PID: ${currentState.pid}, port: ${currentState.port})`);
       return { port: currentState.port, coldStartTime: 0 };
     }
-    // Process died - clean up and continue to start fresh
+    console.log(`[Process] Process died, cleaning up`);
     if (currentState.port) {
       releasePort(currentState.port);
     }
     clearOrphanPid(name);
   }
   
-  // Clear any orphan tracking since we're starting fresh
   clearOrphanPid(name);
   
   const port = await findAvailablePort(settings);
@@ -91,17 +93,63 @@ export async function startProject(
     port,
     started_at: Date.now(),
   });
+  console.log(`[Process] State changed: ${name} → starting (port: ${port})`);
   
-  const env = {
+  // Detect framework for proper env vars
+  const framework = detectFramework(config.cwd);
+  console.log(`[Process] Detected framework: ${framework.name} (Vite-based: ${framework.isViteBased})`);
+  
+  // Expand bun/node to full path (systemd doesn't have user PATH)
+  let startCmd = config.start_cmd;
+  if (startCmd.startsWith("bun ")) {
+    startCmd = `${process.execPath} ${startCmd.slice(4)}`;
+    console.log(`[Process] Expanded 'bun' → '${process.execPath}'`);
+  }
+  
+  const publicOrigin = `http://${name}.localhost`;
+  
+  // Environment variables for frameworks
+  const env: Record<string, string | undefined> = {
     ...process.env,
     PORT: String(port),
-    HOST: "localhost",
+    HOST: "127.0.0.1",
+    SERVER_PORT: String(port),
+    LAZYDEV_STATE_DIR: process.env["LAZYDEV_STATE_DIR"],
   };
+  
+  // Vite-based frameworks: inject VITE_SERVER_ORIGIN to generate correct URLs
+  // This tells Vite to use the proxy URL (no port) instead of internal port
+  if (framework.isViteBased) {
+    env["VITE_SERVER_ORIGIN"] = publicOrigin;
+    console.log(`[Process] Injecting VITE_SERVER_ORIGIN=${publicOrigin}`);
+  }
+  
+  // Framework-specific env vars
+  switch (framework.type) {
+    case "nuxt":
+      env["NUXT_HOST"] = "127.0.0.1";
+      env["NUXT_PORT"] = String(port);
+      break;
+    case "next":
+      env["NEXT_PUBLIC_PORT"] = String(port);
+      break;
+    case "sveltekit":
+      // SvelteKit uses Vite, so VITE_SERVER_ORIGIN handles it
+      break;
+    case "astro":
+      // Astro uses Vite, so VITE_SERVER_ORIGIN handles it
+      break;
+  }
+  
+  console.log(`[Process] Spawning process:`);
+  console.log(`[Process]   cwd: ${config.cwd}`);
+  console.log(`[Process]   cmd: ${startCmd}`);
+  console.log(`[Process]   env: PORT=${port}, HOST=127.0.0.1`);
   
   const startTime = Date.now();
   
   const proc = spawn({
-    cmd: ["sh", "-c", config.start_cmd],
+    cmd: ["sh", "-c", startCmd],
     cwd: config.cwd,
     env,
     stdout: "pipe",
@@ -109,11 +157,12 @@ export async function startProject(
   });
   
   processes.set(name, proc);
+  console.log(`[Process] Spawned PID: ${proc.pid}`);
   
-  // Start piping output to logs database
   pipeOutputToLogs(name, proc);
   
-  const healthy = await waitForHealthy(port, settings);
+  console.log(`[Process] Waiting for healthy (timeout: ${settings.startup_timeout}ms)`);
+  const healthy = await waitForHealthy(port, settings, name);
   
   const coldStartTime = Date.now() - startTime;
   
@@ -127,7 +176,9 @@ export async function startProject(
       last_activity: Date.now(),
       started_at: Date.now(),
     });
+    console.log(`[Process] State changed: ${name} → running (PID: ${proc.pid}, port: ${port}, cold start: ${coldStartTime}ms)`);
   } else {
+    console.log(`[Process] Health check failed, killing process (PID: ${proc.pid})`);
     proc.kill();
     processes.delete(name);
     releasePort(port);
@@ -136,6 +187,7 @@ export async function startProject(
       pid: null,
       port: null,
     });
+    console.log(`[Process] State changed: ${name} → stopped (timeout after ${settings.startup_timeout}ms)`);
     throw new Error(`Server failed to start within ${settings.startup_timeout}ms`);
   }
   
@@ -167,14 +219,16 @@ export async function stopProject(name: string): Promise<void> {
   const state = getProjectState(name);
   
   if (!state || state.status !== "running") {
+    console.log(`[Process] stopProject: ${name} not running`);
     return;
   }
+  
+  console.log(`[Process] Stopping: ${name} (PID: ${state.pid})`);
   
   const proc = processes.get(name);
   const orphanPid = orphanPids.get(name);
   const pid = proc?.pid ?? orphanPid ?? state.pid;
   
-  // Send SIGTERM first for graceful shutdown
   if (proc) {
     proc.kill("SIGTERM");
   } else if (pid) {
@@ -185,7 +239,6 @@ export async function stopProject(name: string): Promise<void> {
     }
   }
   
-  // Wait for graceful shutdown, escalate to SIGKILL if needed
   if (pid) {
     const exited = await waitForProcessExit(pid, GRACEFUL_SHUTDOWN_TIMEOUT);
     
@@ -200,7 +253,6 @@ export async function stopProject(name: string): Promise<void> {
     }
   }
   
-  // Clean up tracking
   if (proc) {
     processes.delete(name);
   }
@@ -218,6 +270,7 @@ export async function stopProject(name: string): Promise<void> {
     port: null,
     last_activity: null,
   });
+  console.log(`[Process] State changed: ${name} → stopped`);
 }
 
 export async function isProcessRunning(pid: number): Promise<boolean> {
@@ -248,18 +301,26 @@ export async function checkHealth(port: number, timeout: number = 1000): Promise
 
 export async function waitForHealthy(
   port: number,
-  settings: Settings
+  settings: Settings,
+  name?: string
 ): Promise<boolean> {
   const start = Date.now();
   const interval = 500;
+  let attempt = 0;
+  const maxAttempts = Math.ceil(settings.startup_timeout / interval);
   
   while (Date.now() - start < settings.startup_timeout) {
-    if (await checkHealth(port)) {
+    attempt++;
+    const healthy = await checkHealth(port);
+    if (healthy) {
+      console.log(`[Health] ${name ?? "server"}:${port} → healthy (attempt ${attempt}/${maxAttempts})`);
       return true;
     }
+    console.log(`[Health] ${name ?? "server"}:${port} → not ready (attempt ${attempt}/${maxAttempts})`);
     await new Promise((r) => setTimeout(r, interval));
   }
   
+  console.log(`[Health] ${name ?? "server"}:${port} → TIMEOUT after ${attempt} attempts`);
   return false;
 }
 

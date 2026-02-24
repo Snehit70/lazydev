@@ -5,10 +5,6 @@ import { getAllStates } from "./state";
 const usedPorts = new Set<number>();
 let initialized = false;
 
-/**
- * Initialize port tracking from DB state.
- * Call this on daemon startup to sync in-memory Set with persisted state.
- */
 export function initializePortsFromState(): void {
   if (initialized) return;
   
@@ -21,9 +17,6 @@ export function initializePortsFromState(): void {
   initialized = true;
 }
 
-/**
- * Reset port tracking (for testing or restart scenarios)
- */
 export function resetPortTracking(): void {
   usedPorts.clear();
   initialized = false;
@@ -49,20 +42,26 @@ export async function findAvailablePort(settings: Settings): Promise<number> {
   const [minPort, maxPort] = settings.port_range;
   const systemUsed = await getUsedPorts(settings);
   
+  console.log(`[Port] Finding available port in ${minPort}-${maxPort} (system: ${systemUsed.size}, tracked: ${usedPorts.size})`);
+  
   for (let port = minPort; port <= maxPort; port++) {
     if (!systemUsed.has(port) && !usedPorts.has(port)) {
       usedPorts.add(port);
+      console.log(`[Port] Allocated: ${port}`);
       return port;
     }
   }
   
+  console.log(`[Port] ERROR: No available ports in range ${minPort}-${maxPort}`);
   throw new Error(`No available ports in range ${minPort}-${maxPort}`);
 }
 
 export function releasePort(port: number): void {
   usedPorts.delete(port);
+  console.log(`[Port] Released: ${port}`);
 }
 
 export function markPortUsed(port: number): void {
   usedPorts.add(port);
+  console.log(`[Port] Marked as used: ${port}`);
 }
