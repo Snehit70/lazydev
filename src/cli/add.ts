@@ -15,17 +15,17 @@ interface RawConfig {
 	projects: Record<string, RawProjectConfig>;
 }
 
-function getFrameworkWarnings(framework: FrameworkInfo): string[] {
-	const warnings: string[] = [];
-	
-	if (framework.isViteBased) {
-		warnings.push("LazyDev auto-injects VITE_SERVER_ORIGIN for correct proxy URLs");
-	} else {
-		warnings.push("LazyDev sets HOST=0.0.0.0 and PORT automatically");
+	function getFrameworkWarnings(framework: FrameworkInfo): string[] {
+		const warnings: string[] = [];
+		
+		if (framework.isViteBased) {
+			warnings.push("LazyDev auto-injects VITE_SERVER_ORIGIN for correct proxy URLs");
+		} else {
+			warnings.push("LazyDev sets HOST and PORT automatically");
+		}
+		
+		return warnings;
 	}
-	
-	return warnings;
-}
 
 function detectStartCmd(pkg: PackageJson | null): string {
 	if (pkg?.scripts) {

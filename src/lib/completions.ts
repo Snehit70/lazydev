@@ -35,8 +35,8 @@ _lazydev_completion() {
                 esac
             fi
             ;;
-        start)
-            COMPREPLY=($(compgen -W "-p --port -F --foreground" -- "\${cur}"))
+        start|completions)
+            COMPREPLY=($(compgen -W "-p --port -F --foreground -s --shell" -- "\${cur}"))
             ;;
     esac
 }
@@ -111,6 +111,11 @@ _lazydev() {
                     _arguments \\
                         '-a[Stop all projects]' \\
                         '--all[Stop all projects]'
+                    ;;
+                completions)
+                    _arguments \\
+                        '-s[Shell type]:shell:(bash zsh fish)' \\
+                        '--shell[Shell type]:shell:(bash zsh fish)'
                     ;;
                 init|list|stop|restart)
                     ;;
