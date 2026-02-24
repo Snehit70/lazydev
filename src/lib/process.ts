@@ -209,24 +209,38 @@ export async function startProject(
   const signalPromise = readOutputAndWaitForSignal(name, proc, framework.type, settings.startup_timeout);
   
   // Wait for signal (for known frameworks) or timeout
-  let ready = false;
+  let signalDetected = false;
   if (READY_SIGNALS[framework.type]) {
     console.log(`[Process] Waiting for ${framework.type} ready signal (timeout: ${settings.startup_timeout}ms)`);
-    ready = await signalPromise;
-    if (ready) {
+    signalDetected = await signalPromise;
+    if (signalDetected) {
       console.log(`[Process] Ready signal detected for ${name}`);
     }
   }
   
-  // Fallback to HTTP health check if no signal detected or unknown framework
-  if (!ready) {
-    console.log(`[Process] Falling back to HTTP health check (timeout: ${settings.startup_timeout}ms)`);
-    ready = await waitForHealthy(port, settings, name);
+  // ALWAYS do HTTP health check after signal to verify server is truly ready
+  // This catches cases where the signal fires but the HTTP server isn't stable yet
+  console.log(`[Process] Verifying HTTP health (signal: ${signalDetected ? "detected" : "not detected"})`);
+  const healthy = await waitForHealthy(port, settings, name);
+  
+  // Extra stabilization: wait a bit and re-check to ensure server doesn't crash
+  // under load (prevents Nuxt restart cascade from early parallel requests)
+  if (healthy) {
+    await new Promise((r) => setTimeout(r, 500));
+    const stableCheck = await checkHealth(port, 2000);
+    if (!stableCheck) {
+      console.log(`[Process] Server became unhealthy after stabilization wait, retrying...`);
+      // Give it one more chance
+      const retry = await waitForHealthy(port, settings, name);
+      if (!retry) {
+        console.log(`[Process] Server failed stability check`);
+      }
+    }
   }
   
   const coldStartTime = Date.now() - startTime;
   
-  if (ready) {
+  if (healthy) {
     setColdStartTime(name, coldStartTime);
     
     setProjectState(name, {
