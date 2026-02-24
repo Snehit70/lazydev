@@ -12,15 +12,11 @@ import { markPortUsed } from "./port";
 async function waitForHealthyWithBackoff(port: number, maxWaitMs: number): Promise<boolean> {
   const start = Date.now();
   let delay = 100;
-  let attempt = 0;
   
   while (Date.now() - start < maxWaitMs) {
-    attempt++;
     if (await checkHealth(port)) {
-      console.log(`[Proxy] Warmup health check passed (attempt ${attempt})`);
       return true;
     }
-    console.log(`[Proxy] Warmup health check failed (attempt ${attempt}, next delay: ${delay}ms)`);
     await new Promise((r) => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, 1000); // Cap at 1s
   }
@@ -38,6 +34,26 @@ interface WebSocketData {
 let server: Server<WebSocketData> | null = null;
 let currentSettings: Settings | null = null;
 const nameToConfig = new Map<string, ProjectConfig>();
+
+// Cache health check results to avoid hammering the server with checks on every request
+// Key: port number, Value: { healthy: boolean, timestamp: number }
+const healthCheckCache = new Map<number, { healthy: boolean; timestamp: number }>();
+const HEALTH_CHECK_CACHE_TTL = 2000; // 2 seconds
+
+async function checkHealthCached(port: number): Promise<boolean> {
+  const cached = healthCheckCache.get(port);
+  const now = Date.now();
+  
+  // Return cached result if fresh
+  if (cached && (now - cached.timestamp) < HEALTH_CHECK_CACHE_TTL) {
+    return cached.healthy;
+  }
+  
+  // Perform actual health check
+  const healthy = await checkHealth(port);
+  healthCheckCache.set(port, { healthy, timestamp: now });
+  return healthy;
+}
 
 export function setConfig(cfg: Config): void {
   nameToConfig.clear();
@@ -96,10 +112,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const subdomainRaw = host.split(".localhost")[0];
       const subdomain = subdomainRaw?.toLowerCase() ?? "";
       
-      console.log(`[Proxy] ${req.method} ${host} → subdomain: "${subdomain}"`);
-      
       if (!subdomain || !nameToConfig.has(subdomain)) {
-        console.log(`[Proxy] Project not found: "${subdomain}"`);
         return new Response("Project not found", { status: 404 });
       }
       
@@ -107,10 +120,9 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const projectName = projectConfig.name;
       
       let state = getProjectState(projectName);
-      console.log(`[Proxy] Project: ${projectName} (status: ${state?.status ?? "none"}, port: ${state?.port ?? "none"})`);
       
       if (req.headers.get("upgrade") === "websocket") {
-        console.log(`[Proxy] WebSocket upgrade request`);
+        console.log(`[Proxy] WebSocket upgrade for: ${projectName}`);
         
         // Cold start for WebSocket connections
         if (state?.status !== "running" || !state.port) {
@@ -146,9 +158,9 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       
       // HTTP request
       if (state?.status === "running" && state.port) {
-        console.log(`[Proxy] Checking health: localhost:${state.port}`);
-        if (await checkHealth(state.port)) {
-          console.log(`[Proxy] Proxying to running server: localhost:${state.port}`);
+        // Use cached health check to avoid connection churn
+        // (too many health checks cause Nuxt to restart due to ECONNRESET errors)
+        if (await checkHealthCached(state.port)) {
           updateActivity(projectName);
           return proxyRequest(req, state.port);
         }
@@ -156,24 +168,21 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
         // Health check failed but process state is "running" - likely still warming up
         // (e.g., Nuxt/Vite responds to / but internal routes not ready yet)
         // Retry with backoff before triggering a restart
-        console.log(`[Proxy] Health check failed, server may be warming up...`);
         const warmedUp = await waitForHealthyWithBackoff(state.port, 5000);
         if (warmedUp) {
-          console.log(`[Proxy] Proxying after warmup: localhost:${state.port}`);
           updateActivity(projectName);
           return proxyRequest(req, state.port);
         }
         
-        console.log(`[Proxy] Server unresponsive after warmup retries, will restart`);
+        console.log(`[Proxy] ${projectName} unresponsive, restarting`);
       }
       
       // Cold start
-      console.log(`[Proxy] Cold start required for: ${projectName}`);
+      console.log(`[Proxy] Cold start: ${projectName}`);
       const { port } = await startProject(projectName, projectConfig, cfg.settings);
       
       markPortUsed(port);
       updateActivity(projectName);
-      console.log(`[Proxy] Proxying to: localhost:${port}`);
       return proxyRequest(req, port);
     },
     

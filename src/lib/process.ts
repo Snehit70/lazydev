@@ -8,21 +8,100 @@ const processes = new Map<string, Subprocess>();
 const orphanPids = new Map<string, number>(); // Track PIDs of adopted orphan processes
 
 /**
- * Start piping process output to the log database.
+ * Ready signals for different frameworks.
+ * These are log messages that indicate the dev server is fully ready to serve requests.
+ * For Nuxt, the "[nitro] ✔ Nuxt Nitro server built" message appears after the server
+ * is truly ready to handle all routes (including /_nuxt/... paths).
  */
-function pipeOutputToLogs(name: string, proc: Subprocess): void {
+const READY_SIGNALS: Record<string, string[]> = {
+  nuxt: ["[nitro] ✔ Nuxt Nitro server built"],
+  vite: ["ready in"],
+  next: ["✓ Ready", "compiled successfully"],
+};
+
+/**
+ * Create a promise that resolves when a ready signal is detected in process output.
+ * Returns true if signal detected, false if timeout.
+ * Accepts streams directly (for use with tee()).
+ */
+function waitForReadySignal(
+  stdout: ReadableStream<Uint8Array> | null,
+  stderr: ReadableStream<Uint8Array> | null,
+  frameworkType: string,
+  timeoutMs: number
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const signals = READY_SIGNALS[frameworkType];
+    if (!signals || signals.length === 0) {
+      resolve(false);
+      return;
+    }
+
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(false);
+      }
+    }, timeoutMs);
+
+    const checkStream = async (stream: ReadableStream<Uint8Array> | null) => {
+      if (!stream) return;
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (!resolved) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            for (const signal of signals) {
+              if (line.includes(signal)) {
+                clearTimeout(timeout);
+                if (!resolved) {
+                  resolved = true;
+                  resolve(true);
+                }
+                reader.cancel().catch(() => {});
+                return;
+              }
+            }
+          }
+        }
+      } catch {
+        // Stream closed
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    // Check both stdout and stderr (Nuxt logs to both)
+    checkStream(stdout);
+    checkStream(stderr);
+  });
+}
+
+/**
+ * Start piping process output to the log database.
+ * Accepts streams directly (for use with tee()).
+ */
+function pipeOutputToLogs(
+  name: string, 
+  stdout: ReadableStream<Uint8Array> | null,
+  stderr: ReadableStream<Uint8Array> | null
+): void {
   const pipeStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
     if (!stream) return;
     
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    
-    // Cancel reader if process exits while read() is pending (prevents hang)
-    const exitHandler = () => {
-      reader.cancel().catch(() => {});
-    };
-    proc.exited.then(exitHandler).catch(() => {});
     
     try {
       while (true) {
@@ -57,8 +136,8 @@ function pipeOutputToLogs(name: string, proc: Subprocess): void {
   };
   
   // Start piping both streams (don't await - run in background)
-  pipeStream(proc.stdout as ReadableStream<Uint8Array> | null, "stdout");
-  pipeStream(proc.stderr as ReadableStream<Uint8Array> | null, "stderr");
+  pipeStream(stdout, "stdout");
+  pipeStream(stderr, "stderr");
 }
 
 export async function startProject(
@@ -159,14 +238,34 @@ export async function startProject(
   processes.set(name, proc);
   console.log(`[Process] Spawned PID: ${proc.pid}`);
   
-  pipeOutputToLogs(name, proc);
+  // Tee streams: one branch for signal detection, one for logging
+  const stdout = proc.stdout as ReadableStream<Uint8Array> | null;
+  const stderr = proc.stderr as ReadableStream<Uint8Array> | null;
+  const [stdoutForSignal, stdoutForLog] = stdout ? stdout.tee() : [null, null];
+  const [stderrForSignal, stderrForLog] = stderr ? stderr.tee() : [null, null];
   
-  console.log(`[Process] Waiting for healthy (timeout: ${settings.startup_timeout}ms)`);
-  const healthy = await waitForHealthy(port, settings, name);
+  // Start piping logs immediately (runs in background)
+  pipeOutputToLogs(name, stdoutForLog, stderrForLog);
+  
+  // Wait for framework-specific ready signal first (for known frameworks)
+  let ready = false;
+  if (READY_SIGNALS[framework.type]) {
+    console.log(`[Process] Waiting for ${framework.type} ready signal (timeout: ${settings.startup_timeout}ms)`);
+    ready = await waitForReadySignal(stdoutForSignal, stderrForSignal, framework.type, settings.startup_timeout);
+    if (ready) {
+      console.log(`[Process] Ready signal detected for ${name}`);
+    }
+  }
+  
+  // Fallback to HTTP health check if no signal detected or unknown framework
+  if (!ready) {
+    console.log(`[Process] Falling back to HTTP health check (timeout: ${settings.startup_timeout}ms)`);
+    ready = await waitForHealthy(port, settings, name);
+  }
   
   const coldStartTime = Date.now() - startTime;
   
-  if (healthy) {
+  if (ready) {
     setColdStartTime(name, coldStartTime);
     
     setProjectState(name, {
