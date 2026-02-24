@@ -216,7 +216,7 @@ export function installCompletions(shell?: "bash" | "zsh" | "fish"): { success: 
   }
   
   const instructions = targetShell === "zsh" 
-    ? "Run: source ~/.zshrc or restart your shell"
+    ? "Ensure 'fpath+=(~/.zfunc)' is in your ~/.zshrc, then run: autoload -Uz compinit && compinit (or restart your shell)"
     : targetShell === "bash"
     ? "Run: source ~/.bashrc or restart your shell"
     : "Restart your shell or run: source ~/.config/fish/config.fish";

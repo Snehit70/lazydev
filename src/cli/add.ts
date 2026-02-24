@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
-import { join, basename } from "path";
+import { join, basename, dirname } from "path";
 import { parse, stringify } from "yaml";
 import type { RawProjectConfig } from "../lib/types";
 import * as readline from "readline";
@@ -216,6 +216,12 @@ export async function run(path?: string, options: AddOptions = {}) {
 		start_cmd: startCmd,
 		idle_timeout: idleTimeout,
 	};
+	
+	// Ensure config directory exists
+	const configDir = dirname(CONFIG_PATH);
+	if (!existsSync(configDir)) {
+		mkdirSync(configDir, { recursive: true });
+	}
 	
 	writeFileSync(CONFIG_PATH, stringify(config));
 	
