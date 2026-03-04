@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { dirname } from "path";
 import { parse, stringify } from "yaml";
+import * as readline from "readline";
 import type { RawProjectConfig } from "../lib/types";
 
 const HOME = homedir();
@@ -24,7 +25,7 @@ function validateName(name: string): string | null {
 
 function prompt(question: string, defaultVal: string): Promise<string> {
   return new Promise((resolve) => {
-    const rl = require("readline").createInterface({
+    const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
@@ -64,7 +65,6 @@ export async function run(options: AddOptions = {}) {
   }
   
   let name = options.name ?? `project${port}`;
-  name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   
   if (!options.nonInteractive) {
     console.log(`\n  Port: ${port}`);
@@ -90,6 +90,8 @@ export async function run(options: AddOptions = {}) {
       console.log("Cancelled.");
       process.exit(0);
     }
+  } else {
+    name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   }
   
   const nameError = validateName(name);

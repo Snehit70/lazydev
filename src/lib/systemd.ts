@@ -9,3 +9,7 @@ export async function stopService(): Promise<{ success: boolean; message: string
 export function isSystemdAvailable(): boolean {
   return false;
 }
+
+export function getServiceStatus(): { active: boolean; canControl: boolean } {
+  return { active: false, canControl: false };
+}

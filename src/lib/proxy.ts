@@ -57,7 +57,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
   
   server = serve({
     port: cfg.settings.proxy_port,
-    hostname: "0.0.0.0",
+    hostname: "127.0.0.1",
     idleTimeout: 255,
     
     async fetch(req, srv) {
