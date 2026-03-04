@@ -1,14 +1,26 @@
 import { loadConfig } from "../lib/config";
-import { getAllStates } from "../lib/state";
-import { checkHealth } from "../lib/process";
+
+async function checkHealth(port: number): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    
+    const response = await fetch(`http://localhost:${port}`, {
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeout);
+    return response.ok || response.status === 304;
+  } catch {
+    return false;
+  }
+}
 
 export async function run(name?: string) {
   try {
     const config = loadConfig();
-    const states = getAllStates();
     
     if (name) {
-      const state = states[name];
       const project = config.projects[name];
       
       if (!project) {
@@ -16,18 +28,13 @@ export async function run(name?: string) {
         process.exit(1);
       }
       
-      const isHealthy = state?.port ? await checkHealth(state.port) : false;
-      const status = isHealthy ? "🟢 running" : (state?.status === "starting" ? "🟡 starting" : "🔴 stopped");
-      const port = state?.port ?? "-";
-      const lastActivity = state?.last_activity 
-        ? new Date(state.last_activity).toLocaleTimeString() 
-        : "-";
+      const isHealthy = await checkHealth(project.port);
+      const status = isHealthy ? "🟢 running" : "🔴 not responding";
       
       console.log(`Project: ${name}`);
       console.log(`  Status: ${status}`);
-      console.log(`  Port: ${port}`);
-      console.log(`  Last activity: ${lastActivity}`);
-      console.log(`  URL: http://${name}.localhost`);
+      console.log(`  Port:   ${project.port}`);
+      console.log(`  URL:    http://${name}.localhost`);
       return;
     }
     
@@ -35,30 +42,30 @@ export async function run(name?: string) {
     
     if (projectNames.length === 0) {
       console.log("No projects configured.");
-      console.log("Add one with: lazydev add <path>");
+      console.log("Add one with: lazydev add --port <port>");
       return;
     }
     
     console.log("\nProject Status:\n");
-    console.log("  Name              Status      Port    Last Activity");
-    console.log("  ─────────────────────────────────────────────────────");
+    console.log("  Name              Status      Port");
+    console.log("  ─────────────────────────────────────");
     
     for (const name of projectNames) {
-      const state = states[name];
-      const isHealthy = state?.port ? await checkHealth(state.port) : false;
-      const status = isHealthy ? "🟢 running" : (state?.status === "starting" ? "🟡 starting" : "🔴 stopped");
-      const port = state?.port?.toString().padEnd(6) ?? "-     ";
-      const lastActivity = state?.last_activity 
-        ? new Date(state.last_activity).toLocaleTimeString().padEnd(12)
-        : "-           ";
+      const project = config.projects[name];
+      if (!project) continue;
       
-      console.log(`  ${name.padEnd(17)} ${status.padEnd(10)} ${port}  ${lastActivity}`);
+      const isHealthy = await checkHealth(project.port);
+      const status = isHealthy ? "🟢 running" : "🔴 not responding";
+      
+      console.log(`  ${name.padEnd(17)} ${status.padEnd(10)} ${project.port}`);
     }
     
     console.log("\nAccess at: http://<project>.localhost");
+    console.log("Note: Start your dev servers manually first\n");
     
-  } catch (err: any) {
-    console.error("Error:", err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Error:", message);
     process.exit(1);
   }
 }

@@ -1,7 +1,6 @@
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { installCompletions, getShell } from "../lib/completions";
 
 const HOME = homedir();
 const CONFIG_DIR = join(HOME, ".config/lazydev");
@@ -12,13 +11,9 @@ const DEFAULT_CONFIG = `# LazyDev Configuration
 
 settings:
   proxy_port: 80
-  idle_timeout: 10m
-  startup_timeout: 30s
-  port_range: [4000, 4999]
-  scan_interval: 30s
 
 projects:
-  # Add projects with: lazydev add ~/projects/myproject
+  # Add projects with: lazydev add --port 3000
 `;
 
 const DNSMASQ_CONFIG = `# LazyDev DNS - wildcard *.localhost
@@ -26,7 +21,7 @@ address=/localhost/127.0.0.1
 `;
 
 export async function run() {
-  console.log("Initializing LazyDev...\n");
+  console.log("Initializing LazyDev (proxy-only mode)...\n");
   
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -38,12 +33,6 @@ export async function run() {
     console.log("✓ Created config file:", CONFIG_PATH);
   } else {
     console.log("  Config file already exists:", CONFIG_PATH);
-  }
-  
-  const dataDir = join(HOME, ".local/share/lazydev");
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-    console.log("✓ Created data directory:", dataDir);
   }
   
   console.log("\n--- DNS Setup (dnsmasq) ---");
@@ -70,21 +59,10 @@ export async function run() {
   console.log("  sudo setcap 'cap_net_bind_service=+ep' $(which bun)");
   console.log("\nThis allows bun to bind to privileged ports without sudo.");
   
-  console.log("\n--- Shell Completions ---");
-  const shell = getShell();
-  if (shell) {
-    const result = installCompletions(shell);
-    console.log(result.message);
-  } else {
-    console.log("Could not detect shell. Install completions manually:");
-    console.log("  lazydev completions --shell bash");
-    console.log("  lazydev completions --shell zsh");
-    console.log("  lazydev completions --shell fish");
-  }
-  
   console.log("\n--- Done ---");
   console.log("Next steps:");
-  console.log("  1. Add a project: lazydev add ~/projects/myproject");
-  console.log("  2. Start daemon:  lazydev start");
-  console.log("  3. Access at:     http://myproject.localhost");
+  console.log("  1. Add a project: lazydev add --port 3000");
+  console.log("  2. Start your dev server: bun dev (or npm run dev)");
+  console.log("  3. Start proxy:       lazydev start");
+  console.log("  4. Access at:         http://myproject.localhost");
 }

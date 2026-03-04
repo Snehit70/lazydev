@@ -1,14 +1,10 @@
 import { parse } from "yaml";
-import { readFileSync, existsSync, watch, type FSWatcher } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import type { Config, Settings, ProjectConfig } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
 const CONFIG_PATH = "~/.config/lazydev/config.yaml";
-
-let configWatcher: FSWatcher | null = null;
-let onConfigChangeCallback: ((config: Config) => void) | null = null;
-let debounceTimer: Timer | null = null;
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
@@ -17,24 +13,6 @@ export function expandTilde(path: string): string {
     return path.replace("~", home);
   }
   return path;
-}
-
-export function parseDuration(duration: string | number): number {
-  if (typeof duration === "number") return duration;
-  
-  const match = duration.match(/^(\d+)(ms|s|m|h)?$/);
-  if (!match) throw new Error(`Invalid duration: ${duration}`);
-  
-  const value = parseInt(match[1]!);
-  const unit = match[2] || "ms";
-  
-  switch (unit) {
-    case "ms": return value;
-    case "s": return value * 1000;
-    case "m": return value * 60 * 1000;
-    case "h": return value * 60 * 60 * 1000;
-    default: return value;
-  }
 }
 
 export function loadConfig(path: string = CONFIG_PATH): Config {
@@ -56,37 +34,16 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
     ...(parsed.settings ?? {}),
   };
   
-  if (parsed.settings?.idle_timeout !== undefined) {
-    settings.idle_timeout = parseDuration(parsed.settings.idle_timeout);
-  }
-  if (parsed.settings?.startup_timeout !== undefined) {
-    settings.startup_timeout = parseDuration(parsed.settings.startup_timeout);
-  }
-  if (parsed.settings?.scan_interval !== undefined) {
-    settings.scan_interval = parseDuration(parsed.settings.scan_interval);
-  }
-  if (parsed.settings?.min_timeout !== undefined) {
-    settings.min_timeout = parseDuration(parsed.settings.min_timeout);
-  }
-  if (parsed.settings?.max_timeout !== undefined) {
-    settings.max_timeout = parseDuration(parsed.settings.max_timeout);
-  }
-  
   const projects: Record<string, ProjectConfig> = {};
   
   for (const [name, project] of Object.entries(parsed.projects ?? {})) {
-    if (!project.cwd) {
-      throw new Error(`Project "${name}" missing cwd field`);
-    }
-    if (!project.start_cmd) {
-      throw new Error(`Project "${name}" missing start_cmd field`);
+    if (!project.port) {
+      throw new Error(`Project "${name}" missing port field`);
     }
     
     projects[name] = {
       name,
-      cwd: expandTilde(project.cwd),
-      start_cmd: project.start_cmd,
-      idle_timeout: project.idle_timeout !== undefined ? parseDuration(project.idle_timeout) : settings.idle_timeout,
+      port: project.port,
       ...(project.disabled !== undefined && { disabled: project.disabled }),
       ...(project.aliases !== undefined && { aliases: project.aliases }),
     };
@@ -103,75 +60,10 @@ export function validateConfig(config: Config): string[] {
       errors.push(`Project name "${name}" must be alphanumeric with hyphens, start with letter`);
     }
     
-    if (!project.cwd) {
-      errors.push(`Project "${name}" missing cwd`);
-    }
-    
-    if (!project.start_cmd) {
-      errors.push(`Project "${name}" missing start_cmd`);
+    if (!project.port || project.port < 1 || project.port > 65535) {
+      errors.push(`Project "${name}" invalid port: ${project.port}`);
     }
   }
   
   return errors;
-}
-
-/**
- * Watch config file for changes and call the callback with new config.
- * Debounces rapid changes (e.g., editor save events).
- */
-export function watchConfig(
-  path: string = CONFIG_PATH,
-  onChange: (config: Config) => void
-): void {
-  const configPath = expandTilde(path);
-  
-  if (configWatcher) {
-    configWatcher.close();
-  }
-  
-  onConfigChangeCallback = onChange;
-  
-  configWatcher = watch(configPath, (eventType) => {
-    if (eventType !== "change") return;
-    
-    // Debounce to avoid multiple reloads on rapid saves
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-    }
-    
-    debounceTimer = setTimeout(() => {
-      try {
-        const newConfig = loadConfig(path);
-        const errors = validateConfig(newConfig);
-        
-        if (errors.length > 0) {
-          console.error("[Config] Validation errors:", errors.join(", "));
-          return;
-        }
-        
-        console.log("[Config] Reloaded configuration");
-        onConfigChangeCallback?.(newConfig);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("[Config] Failed to reload:", message);
-      }
-    }, 500);
-  });
-  
-  console.log(`[Config] Watching for changes: ${configPath}`);
-}
-
-/**
- * Stop watching config file.
- */
-export function stopWatchingConfig(): void {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
-  }
-  if (configWatcher) {
-    configWatcher.close();
-    configWatcher = null;
-  }
-  onConfigChangeCallback = null;
 }

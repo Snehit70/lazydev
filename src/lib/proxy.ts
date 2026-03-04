@@ -1,8 +1,5 @@
 import { serve, type Server } from "bun";
-import type { Config, ProjectConfig, Settings } from "./types";
-import { getProjectState, updateActivity, incrementWebSockets, decrementWebSockets } from "./state";
-import { startProject, checkHealth } from "./process";
-import { markPortUsed } from "./port";
+import type { Config, ProjectConfig } from "./types";
 
 interface WebSocketData {
   projectName: string;
@@ -12,12 +9,10 @@ interface WebSocketData {
 }
 
 let server: Server<WebSocketData> | null = null;
-let currentSettings: Settings | null = null;
 const nameToConfig = new Map<string, ProjectConfig>();
 
 export function setConfig(cfg: Config): void {
   nameToConfig.clear();
-  currentSettings = cfg.settings;
   
   for (const [name, project] of Object.entries(cfg.projects)) {
     nameToConfig.set(name.toLowerCase(), project);
@@ -27,12 +22,8 @@ export function setConfig(cfg: Config): void {
   }
 }
 
-async function proxyRequest(
-  req: Request,
-  targetPort: number
-): Promise<Response> {
+async function proxyRequest(req: Request, targetPort: number): Promise<Response> {
   const url = new URL(req.url);
-  // Change hostname to localhost and port to target (server listens on localhost:port, not subdomain.localhost:port)
   url.hostname = "localhost";
   url.port = String(targetPort);
   
@@ -64,7 +55,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
   
   server = serve({
     port: cfg.settings.proxy_port,
-    hostname: "127.0.0.1",
+    hostname: "0.0.0.0",
     idleTimeout: 255,
     
     async fetch(req, srv) {
@@ -72,47 +63,24 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const subdomainRaw = host.split(".localhost")[0];
       const subdomain = subdomainRaw?.toLowerCase() ?? "";
       
-      console.log(`[Proxy] ${req.method} ${host} → subdomain: "${subdomain}"`);
+      console.log(`[Proxy] ${req.method} ${host} → "${subdomain}"`);
       
       if (!subdomain || !nameToConfig.has(subdomain)) {
-        console.log(`[Proxy] Project not found: "${subdomain}"`);
         return new Response("Project not found", { status: 404 });
       }
       
       const projectConfig = nameToConfig.get(subdomain)!;
-      const projectName = projectConfig.name;
-      
-      let state = getProjectState(projectName);
-      console.log(`[Proxy] Project: ${projectName} (status: ${state?.status ?? "none"}, port: ${state?.port ?? "none"})`);
+      console.log(`[Proxy] → localhost:${projectConfig.port}`);
       
       if (req.headers.get("upgrade") === "websocket") {
-        console.log(`[Proxy] WebSocket upgrade request`);
-        
-        // Cold start for WebSocket connections
-        if (state?.status !== "running" || !state.port) {
-          if (!currentSettings) {
-            return new Response("Server not configured", { status: 500 });
-          }
-          
-          try {
-            const { port } = await startProject(projectName, projectConfig, currentSettings);
-            markPortUsed(port);
-            state = getProjectState(projectName);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to start server";
-            console.log(`[Proxy] Failed to start: ${message}`);
-            return new Response(message, { status: 503 });
-          }
-        }
-        
-        if (!state?.port) {
-          return new Response("Server failed to start", { status: 503 });
-        }
-        
-        updateActivity(projectName);
+        console.log(`[Proxy] WebSocket upgrade`);
         
         const upgraded = srv.upgrade(req, {
-          data: { projectName, targetPort: state.port, connected: false } as WebSocketData,
+          data: { 
+            projectName: projectConfig.name, 
+            targetPort: projectConfig.port, 
+            connected: false 
+          } as WebSocketData,
         });
         
         return upgraded 
@@ -120,32 +88,14 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           : new Response("WebSocket upgrade failed", { status: 500 });
       }
       
-      // HTTP request
-      if (state?.status === "running" && state.port) {
-        console.log(`[Proxy] Checking health: localhost:${state.port}`);
-        if (await checkHealth(state.port)) {
-          console.log(`[Proxy] Proxying to running server: localhost:${state.port}`);
-          updateActivity(projectName);
-          return proxyRequest(req, state.port);
-        }
-        console.log(`[Proxy] Health check failed, restarting`);
-      }
-      
-      // Cold start
-      console.log(`[Proxy] Cold start required for: ${projectName}`);
-      const { port } = await startProject(projectName, projectConfig, cfg.settings);
-      
-      markPortUsed(port);
-      updateActivity(projectName);
-      console.log(`[Proxy] Proxying to: localhost:${port}`);
-      return proxyRequest(req, port);
+      return proxyRequest(req, projectConfig.port);
     },
     
     websocket: {
       data: { projectName: "", targetPort: 0, connected: false } as WebSocketData,
       
       open(ws) {
-        const { targetPort, projectName } = ws.data;
+        const { targetPort } = ws.data;
         
         try {
           const url = `ws://localhost:${targetPort}`;
@@ -154,20 +104,11 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           targetWs.onopen = () => {
             ws.data.targetWs = targetWs;
             ws.data.connected = true;
-            incrementWebSockets(projectName);
           };
           
-          targetWs.onmessage = (e) => {
-            ws.send(e.data);
-          };
-          
-          targetWs.onclose = () => {
-            ws.close();
-          };
-          
-          targetWs.onerror = () => {
-            ws.close();
-          };
+          targetWs.onmessage = (e) => ws.send(e.data);
+          targetWs.onclose = () => ws.close();
+          targetWs.onerror = () => ws.close();
         } catch {
           ws.close();
         }
@@ -178,11 +119,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       },
       
       close(ws) {
-        const { projectName, targetWs, connected } = ws.data;
-        if (connected) {
-          decrementWebSockets(projectName);
-        }
-        targetWs?.close();
+        ws.data.targetWs?.close();
       },
     },
   });
