@@ -92,8 +92,6 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
     },
     
     websocket: {
-      data: { projectName: "", targetPort: 0, connected: false } as WebSocketData,
-      
       open(ws) {
         const { targetPort } = ws.data;
         
@@ -108,8 +106,12 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           
           targetWs.onmessage = (e) => ws.send(e.data);
           targetWs.onclose = () => ws.close();
-          targetWs.onerror = () => ws.close();
-        } catch {
+          targetWs.onerror = (e) => {
+            console.log(`[Proxy] WebSocket error to localhost:${targetPort}:`, e);
+            ws.close();
+          };
+        } catch (err) {
+          console.log(`[Proxy] WebSocket connection failed to localhost:${targetPort}:`, err);
           ws.close();
         }
       },
