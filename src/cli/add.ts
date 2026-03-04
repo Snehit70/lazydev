@@ -70,8 +70,8 @@ export async function run(options: AddOptions = {}) {
     console.log(`\n  Port: ${port}`);
     console.log("");
     
-    const newName = await prompt(`? Project name (${name}): `, name);
-    name = newName.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+    name = await prompt(`? Project name (${name}): `, name);
+    name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
     
     const nameError = validateName(name);
     if (nameError) {
@@ -113,8 +113,14 @@ export async function run(options: AddOptions = {}) {
     process.exit(1);
   }
   
+  for (const [existingName, existingProject] of Object.entries(config.projects)) {
+    if (existingProject.port === port) {
+      console.error(`Port ${port} is already used by project "${existingName}".`);
+      process.exit(1);
+    }
+  }
+  
   config.projects[name] = {
-    name,
     port,
   };
   

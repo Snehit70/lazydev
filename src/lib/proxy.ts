@@ -15,6 +15,8 @@ export function setConfig(cfg: Config): void {
   nameToConfig.clear();
   
   for (const [name, project] of Object.entries(cfg.projects)) {
+    if (project.disabled) continue;
+    
     nameToConfig.set(name.toLowerCase(), project);
     for (const alias of project.aliases ?? []) {
       nameToConfig.set(alias.toLowerCase(), project);
