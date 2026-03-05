@@ -1,8 +1,8 @@
 # LazyDev
 
-Scale-to-zero dev server manager for Linux.
+Proxy-only dev server manager for Linux.
 
-**Key feature**: Automatically stops idle dev servers to save RAM (300-500 MB per server).
+**Key feature**: Clean subdomain URLs (`*.localhost`) routing to your manually-started dev servers.
 
 ## Installation
 
@@ -15,13 +15,17 @@ lazydev init
 ## Quick Start
 
 ```bash
-# 1. Add a project
-lazydev add ~/projects/myproject
+# 1. Start your dev server manually (in a separate terminal)
+cd ~/projects/myproject
+bun dev
 
-# 2. Start the daemon
+# 2. Add the project (tell LazyDev which port to route)
+lazydev add --port 3000 --name myproject
+
+# 3. Start the proxy
 lazydev start
 
-# 3. Access in browser
+# 4. Access in browser
 # http://myproject.localhost
 ```
 
@@ -29,24 +33,26 @@ lazydev start
 
 ```
 lazydev init              # Setup config, dnsmasq, port 80
-lazydev add <path>        # Add project
+lazydev add --port <n>    # Add project (requires --port flag)
 lazydev remove <name>     # Remove project
 lazydev list              # List all projects
-lazydev start             # Start daemon
-lazydev stop              # Stop daemon
+lazydev start             # Start proxy daemon
+lazydev stop              # Stop proxy daemon
+lazydev restart           # Restart proxy daemon
 lazydev status [name]     # Show status
-lazydev up <name>         # Force start
-lazydev down <name>       # Force stop
-lazydev down --all        # Stop all
-lazydev logs [name]       # View logs
+lazydev logs              # View proxy logs
+lazydev completions       # Install shell completions
 ```
 
 ## How It Works
 
-1. **Clean URLs**: `http://project.localhost` (no port numbers)
-2. **Auto port allocation**: Projects get random ports in 4000-4999 range
-3. **Scale-to-zero**: Servers stop after 10 min idle (configurable)
-4. **WebSocket support**: HMR works for Vite, Nuxt, Next.js
+1. **You start your dev server** (e.g., `bun dev`, `npm run dev`)
+2. **Add project to LazyDev** with the port number
+3. **LazyDev proxies** `*.localhost` requests to your dev server
+
+```
+Browser → http://myproject.localhost → LazyDev Proxy → localhost:3000 (your dev server)
+```
 
 ## Configuration
 
@@ -55,17 +61,30 @@ Config file: `~/.config/lazydev/config.yaml`
 ```yaml
 settings:
   proxy_port: 80
-  idle_timeout: 10m
-  startup_timeout: 30s
-  port_range: [4000, 4999]
 
 projects:
   myproject:
-    name: myproject
-    cwd: ~/projects/myproject
-    start_cmd: bun dev
-    idle_timeout: 15m
+    port: 3000
+    aliases: [mp]      # optional: access via http://mp.localhost
+    disabled: false    # optional: temporarily disable
 ```
+
+## Why Proxy-Only?
+
+The original LazyDev attempted to manage dev server lifecycle (start/stop on idle). This worked for simple servers but failed with:
+- **Nuxt/Vite**: Cold start + lazy compilation = race conditions
+- **Complex frameworks**: Hot reload, workers, background processes
+
+Proxy-only mode is simpler and more reliable - you control your dev server, LazyDev handles routing.
+
+## Comparison
+
+| Feature | Proxy-Only | Scale-to-Zero |
+|---------|------------|---------------|
+| Clean URLs | ✅ | ✅ |
+| Your control | ✅ Start/stop anytime | ❌ Auto-managed |
+| Framework support | ✅ Any | ⚠️ Limited |
+| RAM usage | You decide | Managed |
 
 ## Requirements
 
@@ -88,15 +107,6 @@ sudo dnf install dnsmasq
 echo "address=/localhost/127.0.0.1" | sudo tee /etc/dnsmasq.d/lazydev
 sudo systemctl enable --now dnsmasq
 ```
-
-## Comparison with Portless
-
-| Feature | LazyDev | Portless |
-|---------|---------|----------|
-| Clean URLs | ✅ Port 80 | Port 1355 |
-| Scale-to-zero | ✅ | ❌ |
-| RAM savings | ✅ 300-500 MB/server | ❌ |
-| Config | One-time | Wrap every command |
 
 ## License
 
