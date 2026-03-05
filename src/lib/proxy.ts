@@ -3,6 +3,7 @@ import { readlink } from "fs/promises";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { expandTilde } from "./config";
+import { info, error } from "./logger";
 import type { Config } from "./types";
 
 const PROJECTS_DIR = expandTilde("~/projects");
@@ -122,7 +123,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       const subdomainRaw = host.split(".localhost")[0];
       const subdomain = subdomainRaw?.toLowerCase() ?? "";
       
-      console.log(`[Proxy] ${req.method} ${host} → "${subdomain}"`);
+      info(`${req.method} ${host} → "${subdomain}"`);
       
       if (!subdomain) {
         return new Response("No project specified", { status: 400 });
@@ -147,10 +148,10 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
         );
       }
       
-      console.log(`[Proxy] → localhost:${port}`);
+      info(`→ localhost:${port}`);
       
       if (req.headers.get("upgrade") === "websocket") {
-        console.log(`[Proxy] WebSocket upgrade`);
+        info(`WebSocket upgrade`);
         
         const url = new URL(req.url);
         const targetPath = url.pathname + url.search;
@@ -188,11 +189,11 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           targetWs.onmessage = (e) => ws.send(e.data);
           targetWs.onclose = () => ws.close();
           targetWs.onerror = (e) => {
-            console.log(`[Proxy] WebSocket error to localhost:${targetPort}:`, e);
+            info(`WebSocket error to localhost:${targetPort}: ${e}`);
             ws.close();
           };
         } catch (err) {
-          console.log(`[Proxy] WebSocket connection failed to localhost:${targetPort}:`, err);
+          error(`WebSocket connection failed to localhost:${targetPort}: ${err}`);
           ws.close();
         }
       },
