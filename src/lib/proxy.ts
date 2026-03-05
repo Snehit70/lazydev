@@ -1,5 +1,52 @@
 import { serve, type Server } from "bun";
+import { readlink } from "fs/promises";
+import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { expandTilde } from "./config";
 import type { Config, ProjectConfig } from "./types";
+
+const PROJECTS_DIR = expandTilde("~/projects");
+
+export async function findPortForProject(projectPath: string): Promise<number | null> {
+  try {
+    const ssOutput = execSync("ss -tlnp", { encoding: "utf-8", timeout: 5000 });
+    const lines = ssOutput.split("\n").slice(1);
+
+    for (const line of lines) {
+      const portMatch = line.match(/:(\d+)\s/);
+      const pidMatch = line.match(/pid=(\d+)/);
+
+      if (!portMatch?.[1] || !pidMatch?.[1]) continue;
+
+      const port = parseInt(portMatch[1], 10);
+      const pid = parseInt(pidMatch[1], 10);
+
+      if (port < 1024) continue;
+
+      try {
+        const cwd = await readlink(`/proc/${pid}/cwd`);
+        if (cwd === projectPath) {
+          return port;
+        }
+      } catch {
+        // Process may have exited
+      }
+    }
+  } catch (err) {
+    console.error("[findPortForProject] Error:", err);
+  }
+
+  return null;
+}
+
+export function projectExists(projectName: string): boolean {
+  const projectPath = `${PROJECTS_DIR}/${projectName}`;
+  return existsSync(projectPath);
+}
+
+export function getProjectPath(projectName: string): string {
+  return `${PROJECTS_DIR}/${projectName}`;
+}
 
 interface WebSocketData {
   projectName: string;
