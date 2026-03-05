@@ -1,11 +1,22 @@
 import { loadConfig } from "../lib/config";
 import { startProxy, stopProxy, setConfig } from "../lib/proxy";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { homedir } from "os";
+
+const DATA_DIR = `${homedir()}/.local/share/lazydev`;
+const PID_FILE = `${DATA_DIR}/proxy.pid`;
 
 export async function run(_foreground: boolean = false) {
   console.log("Starting LazyDev proxy...\n");
   
   try {
     const config = loadConfig();
+    
+    // Save PID
+    if (!existsSync(DATA_DIR)) {
+      mkdirSync(DATA_DIR, { recursive: true });
+    }
+    writeFileSync(PID_FILE, String(process.pid));
     
     setConfig(config);
     await startProxy(config);
@@ -18,6 +29,9 @@ export async function run(_foreground: boolean = false) {
     const shutdown = () => {
       console.log("\nStopping...");
       stopProxy();
+      if (existsSync(PID_FILE)) {
+        require("fs").unlinkSync(PID_FILE);
+      }
       process.exit(0);
     };
     
