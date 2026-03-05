@@ -98,7 +98,29 @@ compdef _lazydev lazydev
     }
   }
   
-  return { success: false, message: `Shell '${shell}' not supported. Use bash or zsh.` };
+  if (shell === "fish") {
+    const compDir = `${HOME}/.config/fish/completions`;
+    const compScript = `# LazyDev fish completions
+complete -c lazydev -f -a 'init add remove list start stop restart status logs completions'
+complete -c lazydev -f -l 'help' -d 'Show help'
+complete -c lazydev -f -l 'version' -d 'Show version'
+complete -c lazydev -f -l 'port' -d 'Port number' -a '(echo 3000; echo 5173; echo 8080)'
+complete -c lazydev -f -l 'name' -d 'Project name'
+complete -c lazydev -f -l 'yes' -d 'Skip prompts'
+`;
+    
+    try {
+      if (!existsSync(compDir)) {
+        mkdirSync(compDir, { recursive: true });
+      }
+      writeFileSync(`${compDir}/lazydev.fish`, compScript);
+      return { success: true, message: "Fish completions installed to ~/.config/fish/completions/" };
+    } catch (err) {
+      return { success: false, message: `Failed: ${err}` };
+    }
+  }
+  
+  return { success: false, message: `Shell '${shell}' not supported. Use bash, zsh, or fish.` };
 }
 
 export { getShell, installCompletions };

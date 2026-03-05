@@ -11,9 +11,11 @@ export async function run() {
     try {
       process.kill(pid, "SIGTERM");
       console.log(`✓ Sent SIGTERM to proxy process (PID: ${pid})`);
+      require("fs").unlinkSync(PID_FILE);
       return;
     } catch {
-      // Process not found
+      // Process not found, remove stale PID file
+      try { require("fs").unlinkSync(PID_FILE); } catch { /* ignore */ }
     }
   }
   

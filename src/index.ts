@@ -41,9 +41,14 @@ async function run() {
         process.exit(1);
       }
       const portStr = args.values.port!;
+      const port = parseInt(portStr);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        console.error(`Invalid port: ${portStr}. Must be 1-65535.`);
+        process.exit(1);
+      }
       await import("./cli/add").then((m) => m.run({
         name: args.values.name ?? undefined,
-        port: parseInt(portStr),
+        port,
         nonInteractive: args.values.yes ?? false,
       }));
       break;

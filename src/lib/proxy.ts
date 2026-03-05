@@ -4,6 +4,7 @@ import type { Config, ProjectConfig } from "./types";
 interface WebSocketData {
   projectName: string;
   targetPort: number;
+  targetPath: string;
   targetWs?: WebSocket;
   connected: boolean;
 }
@@ -77,10 +78,14 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       if (req.headers.get("upgrade") === "websocket") {
         console.log(`[Proxy] WebSocket upgrade`);
         
+        const url = new URL(req.url);
+        const targetPath = url.pathname + url.search;
+        
         const upgraded = srv.upgrade(req, {
           data: { 
             projectName: projectConfig.name, 
-            targetPort: projectConfig.port, 
+            targetPort: projectConfig.port,
+            targetPath,
             connected: false 
           } as WebSocketData,
         });
@@ -95,10 +100,10 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
     
     websocket: {
       open(ws) {
-        const { targetPort } = ws.data;
+        const { targetPort, targetPath } = ws.data;
         
         try {
-          const url = `ws://localhost:${targetPort}`;
+          const url = `ws://localhost:${targetPort}${targetPath}`;
           const targetWs = new WebSocket(url);
           
           targetWs.onopen = () => {

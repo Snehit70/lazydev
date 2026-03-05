@@ -41,9 +41,14 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
       throw new Error(`Project "${name}" missing port field`);
     }
     
+    const port = Number(project.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Project "${name}" invalid port: ${project.port}`);
+    }
+    
     projects[name] = {
       name,
-      port: project.port,
+      port,
       ...(project.disabled !== undefined && { disabled: project.disabled }),
       ...(project.aliases !== undefined && { aliases: project.aliases }),
     };

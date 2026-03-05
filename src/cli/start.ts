@@ -12,14 +12,14 @@ export async function run(_foreground: boolean = false) {
   try {
     const config = loadConfig();
     
-    // Save PID
+    setConfig(config);
+    await startProxy(config);
+    
+    // Save PID only after successful start
     if (!existsSync(DATA_DIR)) {
       mkdirSync(DATA_DIR, { recursive: true });
     }
     writeFileSync(PID_FILE, String(process.pid));
-    
-    setConfig(config);
-    await startProxy(config);
     
     console.log(`✓ Proxy listening on port ${config.settings.proxy_port}`);
     console.log(`  Access projects at: http://<project>.localhost`);

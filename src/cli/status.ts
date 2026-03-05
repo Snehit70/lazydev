@@ -1,10 +1,10 @@
 import { loadConfig } from "../lib/config";
 
 async function checkHealth(port: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-    
     const response = await fetch(`http://localhost:${port}`, {
       signal: controller.signal,
     });
@@ -12,6 +12,7 @@ async function checkHealth(port: number): Promise<boolean> {
     clearTimeout(timeout);
     return response.ok || response.status === 304;
   } catch {
+    clearTimeout(timeout);
     return false;
   }
 }
