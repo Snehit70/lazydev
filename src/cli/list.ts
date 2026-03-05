@@ -23,17 +23,16 @@ export async function run(json: boolean = false) {
   
   if (projects.length === 0) {
     console.log("No projects configured.");
-    console.log("Add one with: lazydev add <path>");
+    console.log("Add one with: lazydev add --port <port>");
     return;
   }
   
   console.log("Configured Projects:\n");
-  console.log("  Name              Directory                    Command");
-  console.log("  ─────────────────────────────────────────────────────────");
+  console.log("  Name              Port");
+  console.log("  ────────────────────────");
   
   for (const [name, project] of projects) {
-    const dir = project.cwd.replace(HOME, "~");
-    console.log(`  ${name.padEnd(17)} ${dir.padEnd(28)} ${project.start_cmd}`);
+    console.log(`  ${name.padEnd(17)} ${project.port}`);
   }
   
   console.log("\nAccess at: http://<name>.localhost");
