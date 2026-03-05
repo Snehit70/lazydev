@@ -71,7 +71,6 @@ export async function run(options: AddOptions = {}) {
     console.log("");
     
     name = await prompt(`? Project name (${name}): `, name);
-    name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
     
     const nameError = validateName(name);
     if (nameError) {
@@ -90,9 +89,9 @@ export async function run(options: AddOptions = {}) {
       console.log("Cancelled.");
       process.exit(0);
     }
-  } else {
-    name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   }
+  
+  name = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   
   const nameError = validateName(name);
   if (nameError) {
