@@ -1,68 +1,124 @@
-import { loadConfig } from "../lib/config";
+import { readdirSync, statSync } from "fs";
+import { loadConfig, expandTilde } from "../lib/config";
+import { findPortForProject, getProjectsDir, setConfig } from "../lib/proxy";
 
-async function checkHealth(port: number): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2000);
+interface ProjectStatus {
+  name: string;
+  path: string;
+  port: number | null;
+  running: boolean;
+}
+
+async function scanProjects(): Promise<ProjectStatus[]> {
+  const projectsDir = getProjectsDir();
+  const results: ProjectStatus[] = [];
   
   try {
-    const response = await fetch(`http://localhost:${port}`, {
-      signal: controller.signal,
-    });
+    const entries = readdirSync(projectsDir);
     
-    clearTimeout(timeout);
-    return response.ok || response.status === 304;
-  } catch {
-    clearTimeout(timeout);
-    return false;
+    for (const entry of entries) {
+      const fullPath = `${projectsDir}/${entry}`;
+      
+      try {
+        const stat = statSync(fullPath);
+        if (!stat.isDirectory()) continue;
+        
+        // Skip hidden directories
+        if (entry.startsWith(".")) continue;
+        
+        const port = await findPortForProject(fullPath, true);
+        
+        results.push({
+          name: entry,
+          path: fullPath,
+          port,
+          running: port !== null,
+        });
+      } catch {
+        // Skip inaccessible directories
+      }
+    }
+  } catch (err) {
+    console.error(`Cannot read projects directory: ${projectsDir}`);
   }
+  
+  return results;
 }
 
 export async function run(name?: string) {
   try {
     const config = loadConfig();
+    setConfig(config);
+    
+    const projectsDir = config.settings.projects_dir 
+      ? expandTilde(config.settings.projects_dir)
+      : expandTilde("~/projects");
     
     if (name) {
-      const project = config.projects[name];
+      // Check specific project
+      const projectPath = `${projectsDir}/${name}`;
+      const port = await findPortForProject(projectPath);
       
-      if (!project) {
-        console.error(`Project "${name}" not found in config.`);
-        process.exit(1);
+      if (port) {
+        console.log(`Project: ${name}`);
+        console.log(`  Status: 🟢 running`);
+        console.log(`  Port:   ${port}`);
+        console.log(`  URL:    http://${name}.localhost`);
+      } else {
+        console.log(`Project: ${name}`);
+        console.log(`  Status: 🔴 not running`);
+        console.log(`  Path:   ${projectPath}`);
+        console.log(`\nStart with: cd ${projectPath} && bun dev`);
       }
-      
-      const isHealthy = await checkHealth(project.port);
-      const status = isHealthy ? "🟢 running" : "🔴 not responding";
-      
-      console.log(`Project: ${name}`);
-      console.log(`  Status: ${status}`);
-      console.log(`  Port:   ${project.port}`);
-      console.log(`  URL:    http://${name}.localhost`);
       return;
     }
     
-    const projectNames = Object.keys(config.projects);
+    // Scan all projects
+    const projects = await scanProjects();
+    const running = projects.filter(p => p.running);
+    const stopped = projects.filter(p => !p.running);
     
-    if (projectNames.length === 0) {
-      console.log("No projects configured.");
-      console.log("Add one with: lazydev add --port <port>");
-      return;
+    console.log(`\nProjects dir: ${projectsDir}\n`);
+    
+    if (running.length > 0) {
+      console.log("Running dev servers:");
+      console.log("  Name              Port    URL");
+      console.log("  ─────────────────────────────────────────────────");
+      
+      for (const p of running) {
+        const url = `http://${p.name}.localhost`;
+        console.log(`  ${p.name.padEnd(17)} ${String(p.port).padEnd(7)} ${url}`);
+      }
+      console.log("");
     }
     
-    console.log("\nProject Status:\n");
-    console.log("  Name              Status      Port");
-    console.log("  ─────────────────────────────────────");
-    
-    for (const name of projectNames) {
-      const project = config.projects[name];
-      if (!project) continue;
-      
-      const isHealthy = await checkHealth(project.port);
-      const status = isHealthy ? "🟢 running" : "🔴 not responding";
-      
-      console.log(`  ${name.padEnd(17)} ${status.padEnd(10)} ${project.port}`);
+    // Show aliases if any
+    const aliases = config.aliases ?? {};
+    if (Object.keys(aliases).length > 0) {
+      console.log("Aliases:");
+      for (const [alias, target] of Object.entries(aliases)) {
+        console.log(`  ${alias} → ${target}`.padEnd(30) + `http://${alias}.localhost`);
+      }
+      console.log("");
     }
     
-    console.log("\nAccess at: http://<project>.localhost");
-    console.log("Note: Start your dev servers manually first\n");
+    if (stopped.length > 0 && stopped.length <= 10) {
+      console.log("Not running:");
+      for (const p of stopped.slice(0, 5)) {
+        console.log(`  ${p.name}`);
+      }
+      if (stopped.length > 5) {
+        console.log(`  ... and ${stopped.length - 5} more`);
+      }
+      console.log("");
+    }
+    
+    if (running.length === 0) {
+      console.log("No dev servers running.\n");
+      console.log("Start one with:");
+      console.log("  cd ~/projects/<name>");
+      console.log("  bun dev\n");
+    }
     
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

@@ -7,7 +7,7 @@ import type { Config } from "./types";
 
 const PROJECTS_DIR = expandTilde("~/projects");
 
-export async function findPortForProject(projectPath: string): Promise<number | null> {
+export async function findPortForProject(projectPath: string, includeSubdirs = false): Promise<number | null> {
   try {
     const ssOutput = execSync("ss -tlnp", { encoding: "utf-8", timeout: 5000 });
     const lines = ssOutput.split("\n").slice(1);
@@ -25,7 +25,12 @@ export async function findPortForProject(projectPath: string): Promise<number | 
 
       try {
         const cwd = await readlink(`/proc/${pid}/cwd`);
+        // Exact match
         if (cwd === projectPath) {
+          return port;
+        }
+        // Subdirectory match (for monorepos)
+        if (includeSubdirs && cwd.startsWith(projectPath + "/")) {
           return port;
         }
       } catch {
