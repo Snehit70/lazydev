@@ -3,7 +3,7 @@ import { readlink } from "fs/promises";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { expandTilde } from "./config";
-import type { Config, ProjectConfig } from "./types";
+import type { Config } from "./types";
 
 const PROJECTS_DIR = expandTilde("~/projects");
 
@@ -57,19 +57,23 @@ interface WebSocketData {
 }
 
 let server: Server<WebSocketData> | null = null;
-const nameToConfig = new Map<string, ProjectConfig>();
+let projectsDir = PROJECTS_DIR;
+const aliasToProject = new Map<string, string>();
 
 export function setConfig(cfg: Config): void {
-  nameToConfig.clear();
+  projectsDir = cfg.settings.projects_dir 
+    ? expandTilde(cfg.settings.projects_dir) 
+    : PROJECTS_DIR;
   
-  for (const [name, project] of Object.entries(cfg.projects)) {
-    if (project.disabled) continue;
-    
-    nameToConfig.set(name.toLowerCase(), project);
-    for (const alias of project.aliases ?? []) {
-      nameToConfig.set(alias.toLowerCase(), project);
-    }
+  aliasToProject.clear();
+  
+  for (const [alias, target] of Object.entries(cfg.aliases ?? {})) {
+    aliasToProject.set(alias.toLowerCase(), target);
   }
+}
+
+export function getProjectsDir(): string {
+  return projectsDir;
 }
 
 async function proxyRequest(req: Request, targetPort: number): Promise<Response> {
@@ -115,12 +119,30 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       
       console.log(`[Proxy] ${req.method} ${host} → "${subdomain}"`);
       
-      if (!subdomain || !nameToConfig.has(subdomain)) {
-        return new Response("Project not found", { status: 404 });
+      if (!subdomain) {
+        return new Response("No project specified", { status: 400 });
       }
       
-      const projectConfig = nameToConfig.get(subdomain)!;
-      console.log(`[Proxy] → localhost:${projectConfig.port}`);
+      // Resolve alias to project name
+      const projectName = aliasToProject.get(subdomain) ?? subdomain;
+      const projectPath = `${projectsDir}/${projectName}`;
+      
+      // Check if project directory exists
+      if (!existsSync(projectPath)) {
+        return new Response(`Project "${projectName}" not found\n\nNo directory: ${projectPath}`, { status: 404 });
+      }
+      
+      // Find running dev server
+      const port = await findPortForProject(projectPath);
+      if (!port) {
+        return new Response(
+          `No dev server running for "${projectName}"\n\n` +
+          `Start one with:\n  cd ${projectPath}\n  bun dev`,
+          { status: 503 }
+        );
+      }
+      
+      console.log(`[Proxy] → localhost:${port}`);
       
       if (req.headers.get("upgrade") === "websocket") {
         console.log(`[Proxy] WebSocket upgrade`);
@@ -130,8 +152,8 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
         
         const upgraded = srv.upgrade(req, {
           data: { 
-            projectName: projectConfig.name, 
-            targetPort: projectConfig.port,
+            projectName, 
+            targetPort: port,
             targetPath,
             connected: false 
           } as WebSocketData,
@@ -142,7 +164,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
           : new Response("WebSocket upgrade failed", { status: 500 });
       }
       
-      return proxyRequest(req, projectConfig.port);
+      return proxyRequest(req, port);
     },
     
     websocket: {

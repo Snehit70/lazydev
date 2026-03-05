@@ -14,11 +14,13 @@ export interface RawProjectConfig {
 
 export interface Settings {
   proxy_port: number;
+  projects_dir?: string;
 }
 
 export interface Config {
   settings: Settings;
   projects: Record<string, ProjectConfig>;
+  aliases?: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
