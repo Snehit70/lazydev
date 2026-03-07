@@ -1,7 +1,7 @@
 import { serve, type Server } from "bun";
 import { readlink } from "fs/promises";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, watch } from "fs";
 import { expandTilde } from "./config";
 import { info, error } from "./logger";
 import type { Config } from "./types";
@@ -52,6 +52,55 @@ export function projectExists(projectName: string): boolean {
 
 export function getProjectPath(projectName: string): string {
   return `${PROJECTS_DIR}/${projectName}`;
+}
+
+let configWatcher: ReturnType<typeof watch> | null = null;
+
+function debounce<T extends (...args: Parameters<T>) => void>(
+  fn: T, 
+  ms: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  
+  return (...args: Parameters<T>) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      fn(...args);
+      timeoutId = null;
+    }, ms);
+  };
+}
+
+export function watchConfig(configPath: string, onReload: () => void): void {
+  if (configWatcher) {
+    configWatcher.close();
+  }
+  
+  const debouncedReload = debounce(() => {
+    info(`Config file changed, reloading...`);
+    onReload();
+  }, 500);
+  
+  try {
+    configWatcher = watch(configPath, (eventType) => {
+      if (eventType === "change") {
+        debouncedReload();
+      }
+    });
+    info(`Watching config for changes: ${configPath}`);
+  } catch (err) {
+    error(`Failed to watch config: ${err}`);
+  }
+}
+
+export function stopConfigWatcher(): void {
+  if (configWatcher) {
+    configWatcher.close();
+    configWatcher = null;
+    info(`Stopped watching config`);
+  }
 }
 
 interface WebSocketData {

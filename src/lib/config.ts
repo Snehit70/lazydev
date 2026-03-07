@@ -4,7 +4,7 @@ import { homedir } from "os";
 import type { Config, Settings, ProjectConfig } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
-const CONFIG_PATH = "~/.config/lazydev/config.yaml";
+export const CONFIG_PATH = "~/.config/lazydev/config.yaml";
 
 export function expandTilde(path: string): string {
   if (path.startsWith("~")) {
@@ -23,7 +23,7 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
   }
   
   const raw = readFileSync(configPath, "utf-8");
-  const parsed = parse(raw) as Partial<Config> | null;
+  const parsed = parse(raw) as Record<string, unknown> | null;
   
   if (!parsed) {
     throw new Error(`Invalid config file: ${configPath}`);
@@ -31,30 +31,38 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
   
   const settings: Settings = {
     ...DEFAULT_SETTINGS,
-    ...(parsed.settings ?? {}),
+    ...((parsed["settings"] as Record<string, unknown>) ?? {}),
   };
   
+  // Handle legacy projects (optional for backward compat)
   const projects: Record<string, ProjectConfig> = {};
+  const rawProjects = parsed["projects"] as Record<string, unknown> | undefined;
   
-  for (const [name, project] of Object.entries(parsed.projects ?? {})) {
-    if (!project.port) {
-      throw new Error(`Project "${name}" missing port field`);
+  if (rawProjects) {
+    for (const [name, project] of Object.entries(rawProjects)) {
+      const p = project as Record<string, unknown>;
+      if (!p["port"]) {
+        throw new Error(`Project "${name}" missing port field`);
+      }
+      
+      const port = Number(p["port"]);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error(`Project "${name}" invalid port: ${p["port"]}`);
+      }
+      
+      projects[name] = {
+        name,
+        port,
+        ...(p["disabled"] !== undefined && { disabled: Boolean(p["disabled"]) }),
+        ...(p["aliases"] !== undefined && { aliases: p["aliases"] as string[] }),
+      };
     }
-    
-    const port = Number(project.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error(`Project "${name}" invalid port: ${project.port}`);
-    }
-    
-    projects[name] = {
-      name,
-      port,
-      ...(project.disabled !== undefined && { disabled: project.disabled }),
-      ...(project.aliases !== undefined && { aliases: project.aliases }),
-    };
   }
   
-  return { settings, projects };
+  // Handle aliases (new format)
+  const aliases = (parsed["aliases"] as Record<string, string>) ?? {};
+  
+  return { settings, projects, aliases };
 }
 
 export function validateConfig(config: Config): string[] {

@@ -1,5 +1,5 @@
-import { loadConfig } from "../lib/config";
-import { startProxy, stopProxy, setConfig } from "../lib/proxy";
+import { loadConfig, CONFIG_PATH, expandTilde } from "../lib/config";
+import { startProxy, stopProxy, setConfig, watchConfig, stopConfigWatcher } from "../lib/proxy";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { homedir } from "os";
 
@@ -11,9 +11,23 @@ export async function run(_foreground: boolean = false) {
   
   try {
     const config = loadConfig();
+    const configPath = expandTilde(CONFIG_PATH);
     
     setConfig(config);
     await startProxy(config);
+    
+    // Watch config for changes
+    if (existsSync(configPath)) {
+      watchConfig(configPath, () => {
+        try {
+          const newConfig = loadConfig();
+          setConfig(newConfig);
+          console.log(`\n✓ Config reloaded - aliases updated\n`);
+        } catch (err) {
+          console.error(`\n✗ Failed to reload config: ${err}\n`);
+        }
+      });
+    }
     
     // Save PID only after successful start
     if (!existsSync(DATA_DIR)) {
@@ -28,6 +42,7 @@ export async function run(_foreground: boolean = false) {
     
     const shutdown = () => {
       console.log("\nStopping...");
+      stopConfigWatcher();
       stopProxy();
       if (existsSync(PID_FILE)) {
         require("fs").unlinkSync(PID_FILE);
