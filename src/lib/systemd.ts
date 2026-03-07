@@ -9,6 +9,7 @@ const SERVICE_FILE_PATH = `/etc/systemd/system/${SERVICE_NAME}.service`;
 function getServiceFile(): string {
   const bunPath = process.argv[0];
   const scriptPath = join(process.cwd(), "src/index.ts");
+  const user = process.env["USER"] ?? "snehit";
   
   return `[Unit]
 Description=LazyDev - Zero-config dev server proxy
@@ -16,6 +17,8 @@ After=network.target
 
 [Service]
 Type=simple
+User=${user}
+WorkingDirectory=${homedir()}
 ExecStart=${bunPath} ${scriptPath} run
 Restart=always
 RestartSec=5
