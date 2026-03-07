@@ -1,12 +1,20 @@
 [Unit]
-Description=LazyDev - Scale-to-zero dev server manager
-After=network.target dnsmasq.service
+Description=LazyDev - Zero-config dev server proxy
+After=network.target
 
 [Service]
 Type=simple
-ExecStart=/home/snehit/.bun/bin/bun run /home/snehit/projects/lazydev/src/index.ts start
+User=snehit
+Group=snehit
+WorkingDirectory=/home/snehit
+ExecStartPre=/bin/sleep 1
+ExecStart=/home/snehit/.bun/bin/bun /home/snehit/projects/lazydev/src/index.ts run
 Restart=always
 RestartSec=5
+Environment=HOME=/home/snehit
+Environment="PATH=/home/snehit/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=default.target
