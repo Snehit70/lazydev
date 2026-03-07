@@ -67,6 +67,9 @@ async function run() {
     case "completions":
       await import("./cli/completions").then((m) => m.run(args.values.shell));
       break;
+    case "run":
+      await import("./cli/start").then((m) => m.run(true));
+      break;
     default:
       console.error(`Unknown command: ${command}`);
       showHelp();

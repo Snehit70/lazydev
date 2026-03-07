@@ -2,13 +2,38 @@ import { loadConfig, CONFIG_PATH, expandTilde } from "../lib/config";
 import { startProxy, stopProxy, setConfig, watchConfig, stopConfigWatcher } from "../lib/proxy";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { homedir } from "os";
+import { startService, isSystemdAvailable, getServiceStatus } from "../lib/systemd";
 
 const DATA_DIR = `${homedir()}/.local/share/lazydev`;
 const PID_FILE = `${DATA_DIR}/proxy.pid`;
 
-export async function run(_foreground: boolean = false) {
+export async function run(foreground: boolean = false) {
   console.log("Starting LazyDev proxy...\n");
   
+  // Try systemd first, fall back to foreground
+  const useSystemd = !foreground && isSystemdAvailable();
+  
+  if (useSystemd) {
+    const status = getServiceStatus();
+    if (status.active) {
+      console.log("✓ LazyDev service is already running");
+      console.log("  Use 'lazydev restart' to restart");
+      console.log("  Use 'lazydev stop' to stop\n");
+      return;
+    }
+    
+    const result = await startService();
+    if (result.success) {
+      console.log("✓ LazyDev service started");
+      console.log("  Access projects at: http://<project>.localhost\n");
+      return;
+    }
+    
+    console.log("⚠ Systemd failed, starting in foreground mode...");
+    console.log("");
+  }
+  
+  // Foreground mode (original behavior)
   try {
     const config = loadConfig();
     const configPath = expandTilde(CONFIG_PATH);
