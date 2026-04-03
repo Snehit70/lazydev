@@ -1,9 +1,10 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "fs";
 import { homedir } from "os";
 import { watch } from "fs";
 
 const LOG_DIR = `${homedir()}/.local/share/lazydev`;
 const LOG_FILE = `${LOG_DIR}/proxy.log`;
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 function ensureLogDir(): void {
   if (!existsSync(LOG_DIR)) {
@@ -31,8 +32,21 @@ export function debug(message: string): void {
   log("DEBUG", message);
 }
 
+function rotateLogIfTooLarge(): void {
+  try {
+    if (!existsSync(LOG_FILE)) return;
+    const stat = statSync(LOG_FILE);
+    if (stat.size > LOG_MAX_BYTES) {
+      renameSync(LOG_FILE, `${LOG_FILE}.old`);
+    }
+  } catch {
+    // Ignore rotation errors
+  }
+}
+
 function log(level: string, message: string): void {
   ensureLogDir();
+  rotateLogIfTooLarge();
   const timestamp = formatTimestamp();
   const logLine = `${timestamp} [${level}] ${message}`;
   
