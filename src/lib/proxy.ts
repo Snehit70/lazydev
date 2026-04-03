@@ -153,6 +153,123 @@ export function getProjectsDir(): string {
   return projectsDir;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function prefersHtml(req: Request): boolean {
+  const accept = req.headers.get("accept") ?? "";
+  return accept.includes("text/html");
+}
+
+function errorPage(status: number, title: string, description: string, details?: string[]): string {
+  const detailList = (details ?? [])
+    .map((detail) => `<li>${escapeHtml(detail)}</li>`)
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${status} ${escapeHtml(title)}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: rgba(15, 23, 42, 0.78);
+      --border: rgba(148, 163, 184, 0.24);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 34%),
+        linear-gradient(180deg, #020617 0%, #0f172a 100%);
+      color: var(--text);
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+    }
+    .card {
+      width: min(720px, 100%);
+      padding: 28px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
+    }
+    .status {
+      display: inline-flex;
+      margin-bottom: 16px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--accent);
+      font-size: 13px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 5vw, 44px);
+      line-height: 1.05;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 15px;
+    }
+    ul {
+      margin: 18px 0 0;
+      padding-left: 18px;
+      color: var(--text);
+    }
+    li { margin: 8px 0; }
+    code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="status">${status}</div>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(description)}</p>
+    ${detailList ? `<ul>${detailList}</ul>` : ""}
+  </main>
+</body>
+</html>`;
+}
+
+function errorResponse(req: Request, status: number, title: string, description: string, details?: string[]): Response {
+  if (prefersHtml(req)) {
+    return new Response(errorPage(status, title, description, details), {
+      status,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+
+  const body = [description, ...(details ?? [])].join("\n\n");
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
 async function proxyRequest(req: Request, targetPort: number): Promise<Response> {
   const url = new URL(req.url);
   url.hostname = "localhost";
@@ -197,7 +314,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       info(`${req.method} ${host} → "${subdomain}"`);
       
       if (!subdomain) {
-        return new Response("No project specified", { status: 400 });
+        return errorResponse(req, 400, "No project specified", "The request did not include a project subdomain.");
       }
       
       // Resolve alias to project name
@@ -206,16 +323,24 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       
       // Check if project directory exists
       if (!existsSync(projectPath)) {
-        return new Response(`Project "${projectName}" not found\n\nNo directory: ${projectPath}`, { status: 404 });
+        return errorResponse(
+          req,
+          404,
+          "Project not found",
+          `LazyDev could not find a local project directory for \"${projectName}\".`,
+          [`Expected directory: ${projectPath}`, "Check the project name or create an alias with `lazydev alias <short> <project>`."],
+        );
       }
       
       // Find running dev server
       const port = await findPortForProject(projectPath);
       if (!port) {
-        return new Response(
-          `No dev server running for "${projectName}"\n\n` +
-          `Start one with:\n  cd ${projectPath}\n  bun dev`,
-          { status: 503 }
+        return errorResponse(
+          req,
+          503,
+          "Dev server not running",
+          `LazyDev found the project, but nothing is listening for \"${projectName}\" right now.`,
+          [`Start it with: cd ${projectPath} && bun dev`, `Then refresh http://${subdomain}.localhost`],
         );
       }
       
