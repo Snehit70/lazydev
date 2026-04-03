@@ -65,9 +65,13 @@ export function readLogs(lineCount: number = 100): string {
 }
 
 export function tailLogs(
-  _lineCount: number, 
   onLine: (line: string) => void
 ): () => void {
+  ensureLogDir();
+  if (!existsSync(LOG_FILE)) {
+    try { appendFileSync(LOG_FILE, ""); } catch { /* ignore */ }
+  }
+
   let position = 0;
   
   try {

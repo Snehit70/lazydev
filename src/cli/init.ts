@@ -11,6 +11,7 @@ const DEFAULT_CONFIG = `# LazyDev Configuration
 
 settings:
   proxy_port: 80
+  # projects_dir: ~/projects  # Directory containing your dev projects
 `;
 
 const DNSMASQ_CONFIG = `# LazyDev DNS - wildcard *.localhost

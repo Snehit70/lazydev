@@ -1,18 +1,22 @@
 import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 const SERVICE_NAME = "lazydev";
 const SERVICE_DIR = join(homedir(), ".config", "systemd", "user");
 const SERVICE_FILE_PATH = join(SERVICE_DIR, `${SERVICE_NAME}.service`);
+
+const __filename = fileURLToPath(import.meta.url);
+const LAZYDEV_ROOT = dirname(dirname(__filename));
 
 function runSystemctl(command: string): string {
   return execSync(`systemctl --user ${command}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 function getServiceFile(): string {
-  const scriptPath = join(process.cwd(), "src/index.ts");
+  const scriptPath = join(LAZYDEV_ROOT, "src", "index.ts");
   const home = homedir();
   const bunBinDir = join(home, ".bun", "bin");
   
@@ -36,7 +40,10 @@ WantedBy=default.target
 
 export function isSystemdAvailable(): boolean {
   try {
-    runSystemctl("is-system-running");
+    execSync("systemctl --user show-environment", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return true;
   } catch {
     return false;
@@ -113,7 +120,10 @@ export async function startService(): Promise<{ success: boolean; message: strin
     }
     
     // Try to create service if not exists
-    await ensureService();
+    const ensured = await ensureService();
+    if (!ensured.success) {
+      return { success: false, message: ensured.message };
+    }
     
     // Start service
     runSystemctl(`start ${SERVICE_NAME}`);

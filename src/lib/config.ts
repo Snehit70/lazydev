@@ -54,13 +54,25 @@ export function loadConfig(path: string = CONFIG_PATH): Config {
         name,
         port,
         ...(p["disabled"] !== undefined && { disabled: Boolean(p["disabled"]) }),
-        ...(p["aliases"] !== undefined && { aliases: p["aliases"] as string[] }),
+        ...(p["aliases"] !== undefined && {
+        aliases: Array.isArray(p["aliases"])
+          ? (p["aliases"] as unknown[]).filter((a): a is string => typeof a === "string")
+          : [],
+      }),
       };
     }
   }
   
   // Handle aliases (new format)
-  const aliases = (parsed["aliases"] as Record<string, string>) ?? {};
+  const rawAliases = parsed["aliases"];
+  const aliases: Record<string, string> = {};
+  if (rawAliases && typeof rawAliases === "object" && !Array.isArray(rawAliases)) {
+    for (const [key, value] of Object.entries(rawAliases)) {
+      if (typeof value === "string") {
+        aliases[key] = value;
+      }
+    }
+  }
   
   return { settings, projects, aliases };
 }

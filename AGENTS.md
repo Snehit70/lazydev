@@ -9,7 +9,7 @@ LazyDev is a zero-config dev server proxy that:
 
 ## Architecture
 
-```
+```text
 src/
 ├── index.ts           # CLI entry point (command routing)
 ├── lib/
@@ -37,7 +37,7 @@ src/
 
 ## How It Works (v0.3.0+)
 
-```
+```text
 User visits: fleetflow.localhost
      ↓
 Proxy checks: ~/projects/fleetflow/ exists?

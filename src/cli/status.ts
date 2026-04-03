@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "fs";
+import { readdirSync, statSync, existsSync } from "fs";
 import { loadConfig, expandTilde } from "../lib/config";
 import { findPortForProject, getProjectsDir, setConfig } from "../lib/proxy";
 import { getServiceStatus, isSystemdAvailable } from "../lib/systemd";
@@ -66,6 +66,16 @@ export async function run(name?: string) {
     if (name) {
       const projectName = config.aliases?.[name] ?? name;
       const projectPath = `${projectsDir}/${projectName}`;
+      
+      if (!existsSync(projectPath)) {
+        console.log(`Project: ${name}`);
+        if (projectName !== name) {
+          console.log(`  Alias:  ${name} → ${projectName}`);
+        }
+        console.log(`  Status: ❌ not found`);
+        return;
+      }
+
       const port = await findPortForProject(projectPath, true);
       
       if (port) {
@@ -120,7 +130,7 @@ export async function run(name?: string) {
       console.log("");
     }
     
-    if (stopped.length > 0 && stopped.length <= 10) {
+    if (stopped.length > 0) {
       console.log("Not running:");
       for (const p of stopped.slice(0, 5)) {
         console.log(`  ${p.name}`);

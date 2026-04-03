@@ -1,12 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { stringify, parse } from "yaml";
 import { CONFIG_PATH, expandTilde } from "../lib/config";
-
-interface RawConfig {
-  settings?: Record<string, unknown>;
-  projects?: Record<string, unknown>;
-  aliases?: Record<string, string>;
-}
+import type { RawConfig } from "../lib/types";
 
 export async function run(alias?: string) {
   if (!alias) {

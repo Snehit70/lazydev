@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, unlinkSync } from "fs";
+import { execSync } from "child_process";
 import { homedir } from "os";
 import { stopService, isSystemdAvailable, getServiceStatus } from "../lib/systemd";
 
@@ -34,7 +35,6 @@ export async function run() {
   
   // Fallback: try to find process on port 80
   try {
-    const { execSync } = require("child_process");
     const output = execSync("lsof -ti:80 -t 2>/dev/null || true", { encoding: "utf-8" }).trim();
     if (output) {
       const pids = output.split("\n").filter(Boolean);

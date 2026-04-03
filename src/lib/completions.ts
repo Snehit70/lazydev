@@ -68,10 +68,10 @@ _lazydev_commands=(
 _lazydev() {
   local -a options
   options=(
-    '(-h --help)'{-h,help}'[Show help]'
-    '(-v --version)'{-v,version}'[Show version]'
-    '(-f --follow)'{-f,follow}'[Follow logs]'
-    '(-l --lines)'{-l,lines}'[Number of log lines]'
+    '(-h --help)'{-h,--help}'[Show help]'
+    '(-v --version)'{-v,--version}'[Show version]'
+    '(-f --follow)'{-f,--follow}'[Follow logs]'
+    '(-l --lines)'{-l,--lines}'[Number of log lines]'
   )
 
   _describe 'command' _lazydev_commands || return 0

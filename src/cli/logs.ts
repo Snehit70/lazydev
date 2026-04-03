@@ -7,7 +7,12 @@ export async function run(_name?: string, follow: boolean = false, lines: number
     console.log(`Following logs from: ${logFile}`);
     console.log("Press Ctrl+C to exit\n");
     
-    const cleanup = tailLogs(lines, (line) => {
+    const logs = readLogs(lines);
+    if (logs.length > 0) {
+      console.log(logs);
+    }
+    
+    const cleanup = tailLogs((line: string) => {
       console.log(line);
     });
     

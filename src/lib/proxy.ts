@@ -2,6 +2,7 @@ import { serve, type Server } from "bun";
 import { readlink } from "fs/promises";
 import { execSync } from "child_process";
 import { existsSync, watch } from "fs";
+import { dirname, basename } from "path";
 import { expandTilde } from "./config";
 import { info, error } from "./logger";
 import type { Config } from "./types";
@@ -67,12 +68,12 @@ export function clearPortCache(): void {
 }
 
 export function projectExists(projectName: string): boolean {
-  const projectPath = `${PROJECTS_DIR}/${projectName}`;
+  const projectPath = `${projectsDir}/${projectName}`;
   return existsSync(projectPath);
 }
 
 export function getProjectPath(projectName: string): string {
-  return `${PROJECTS_DIR}/${projectName}`;
+  return `${projectsDir}/${projectName}`;
 }
 
 let configWatcher: ReturnType<typeof watch> | null = null;
@@ -105,12 +106,14 @@ export function watchConfig(configPath: string, onReload: () => void): void {
   }, 500);
   
   try {
-    configWatcher = watch(configPath, (eventType) => {
-      if (eventType === "change") {
+    const configDir = dirname(configPath);
+    const configFile = basename(configPath);
+    configWatcher = watch(configDir, (eventType, filename) => {
+      if (filename === configFile && (eventType === "change" || eventType === "rename")) {
         debouncedReload();
       }
     });
-    info(`Watching config for changes: ${configPath}`);
+    info(`Watching config directory for changes: ${configDir}`);
   } catch (err) {
     error(`Failed to watch config: ${err}`);
   }
@@ -333,7 +336,7 @@ export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
       }
       
       // Find running dev server
-      const port = await findPortForProject(projectPath);
+      const port = await findPortForProject(projectPath, true);
       if (!port) {
         return errorResponse(
           req,

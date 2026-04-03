@@ -1,3 +1,9 @@
+export interface RawConfig {
+  settings?: Record<string, unknown>;
+  projects?: Record<string, unknown>;
+  aliases?: Record<string, string>;
+}
+
 export interface ProjectConfig {
   name: string;
   port: number;

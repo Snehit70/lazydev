@@ -163,7 +163,7 @@ Replace manual PID management with systemd. `start` → creates/enables service 
 
 ```typescript
 const SERVICE_NAME = "lazydev";
-const SERVICE_FILE_PATH = "/etc/systemd/system/lazydev.service";
+const SERVICE_FILE_PATH = "~/.config/systemd/user/lazydev.service";
 
 function getServiceFile(): string {
   const bunPath = process.argv[0]; // /home/user/.bun/bin/bun

@@ -48,8 +48,12 @@ export async function run(foreground: boolean = false) {
           const newConfig = loadConfig();
           setConfig(newConfig);
           console.log(`\n✓ Config reloaded - aliases updated\n`);
-        } catch (err) {
-          console.error(`\n✗ Failed to reload config: ${err}\n`);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`\n✗ Failed to reload config: ${message}\n`);
+          if (err instanceof Error && err.stack) {
+            console.error(err.stack);
+          }
         }
       });
     }
