@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 
 function getShell(): string | null {
@@ -10,23 +10,27 @@ function getShell(): string | null {
 }
 
 function installCompletions(shell: string): { success: boolean; message: string } {
-  const home = homedir();
-
+  const HOME = homedir();
+  
   if (shell === "bash") {
-    const rcPath = `${home}/.bashrc`;
+    const rcPath = `${HOME}/.bashrc`;
     const compLine = `[ -f ~/.lazydev-completions.sh ] && source ~/.lazydev-completions.sh\n`;
+    
     const compScript = `#!/bin/bash
 _lazydev() {
   local cur prev
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
-
+  
   case "\$prev" in
     lazydev)
-      COMPREPLY=($(compgen -W "init start stop restart alias unalias status logs completions run" -- "\$cur"))
+      COMPREPLY=($(compgen -W "init add remove list start stop restart status logs completions" -- "\$cur"))
       ;;
-    alias|unalias|status|logs)
+    lazydev add)
+      COMPREPLY=($(compgen -W "--port --name --yes -p -n -y" -- "\$cur"))
+      ;;
+    lazydev remove|status|logs)
       COMPREPLY=()
       ;;
     *)
@@ -36,30 +40,31 @@ _lazydev() {
 }
 complete -F _lazydev lazydev
 `;
-
+    
     try {
-      writeFileSync(`${home}/.lazydev-completions.sh`, compScript);
-      const rcContent = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : "";
+      writeFileSync(`${HOME}/.lazydev-completions.sh`, compScript);
+      const rcContent = existsSync(rcPath) ? require("fs").readFileSync(rcPath, "utf-8") : "";
       if (!rcContent.includes("lazydev-completions")) {
-        appendFileSync(rcPath, `\n${compLine}`);
+        require("fs").appendFileSync(rcPath, `\n${compLine}`);
       }
       return { success: true, message: "Bash completions installed. Restart shell or source ~/.bashrc" };
     } catch (err) {
       return { success: false, message: `Failed: ${err}` };
     }
   }
-
+  
   if (shell === "zsh") {
-    const compDir = `${home}/.zsh/completions`;
+    const compDir = `${HOME}/.zsh/completions`;
     const compScript = `# LazyDev zsh completions
 local -a _lazydev_commands
 _lazydev_commands=(
   'init:Initialize lazydev'
+  'add:Add a project'
+  'remove:Remove a project'
+  'list:List projects'
   'start:Start proxy'
   'stop:Stop proxy'
   'restart:Restart proxy'
-  'alias:Add alias'
-  'unalias:Remove alias'
   'status:Show status'
   'logs:Show logs'
   'completions:Install completions'
@@ -68,19 +73,20 @@ _lazydev_commands=(
 _lazydev() {
   local -a options
   options=(
-    '(-h --help)'{-h,--help}'[Show help]'
-    '(-v --version)'{-v,--version}'[Show version]'
-    '(-f --follow)'{-f,--follow}'[Follow logs]'
-    '(-l --lines)'{-l,--lines}'[Number of log lines]'
+    '(-h --help)'{-h,help}'[Show help]'
+    '(-v --version)'{-v,version}'[Show version]'
+    '(-p --port)'{-p,port}'[Port number]'
+    '(-n --name)'{-n,name}'[Project name]'
+    '(-y --yes)'{-y,yes}'[Skip prompts]'
   )
-
+  
   _describe 'command' _lazydev_commands || return 0
   _describe 'option' options || return 0
 }
 
 compdef _lazydev lazydev
 `;
-
+    
     try {
       if (!existsSync(compDir)) {
         mkdirSync(compDir, { recursive: true });
@@ -91,17 +97,18 @@ compdef _lazydev lazydev
       return { success: false, message: `Failed: ${err}` };
     }
   }
-
+  
   if (shell === "fish") {
-    const compDir = `${home}/.config/fish/completions`;
+    const compDir = `${HOME}/.config/fish/completions`;
     const compScript = `# LazyDev fish completions
-complete -c lazydev -f -a 'init start stop restart alias unalias status logs completions run'
+complete -c lazydev -f -a 'init add remove list start stop restart status logs completions'
 complete -c lazydev -f -l 'help' -d 'Show help'
 complete -c lazydev -f -l 'version' -d 'Show version'
-complete -c lazydev -f -l 'follow' -d 'Follow logs in real time'
-complete -c lazydev -f -l 'lines' -d 'Number of log lines'
+complete -c lazydev -f -l 'port' -d 'Port number' -a '(echo 3000; echo 5173; echo 8080)'
+complete -c lazydev -f -l 'name' -d 'Project name'
+complete -c lazydev -f -l 'yes' -d 'Skip prompts'
 `;
-
+    
     try {
       if (!existsSync(compDir)) {
         mkdirSync(compDir, { recursive: true });
@@ -112,7 +119,7 @@ complete -c lazydev -f -l 'lines' -d 'Number of log lines'
       return { success: false, message: `Failed: ${err}` };
     }
   }
-
+  
   return { success: false, message: `Shell '${shell}' not supported. Use bash, zsh, or fish.` };
 }
 

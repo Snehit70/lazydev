@@ -1,24 +1,24 @@
-# LazyDev - Zero-Config Dev Server Proxy
+# LazyDev - Proxy-Only Dev Server Manager
 
 ## Project Overview
 
-LazyDev is a zero-config dev server proxy that:
+LazyDev is a dev server manager that:
 - Gives each project a clean subdomain URL (`http://project.localhost`)
-- **Automatically discovers** running dev servers in `~/projects/`
-- No manual configuration needed - just start your dev server and visit the URL
+- Proxies requests to your manually-started dev servers
+- No lifecycle management - you control your dev servers
 
 ## Architecture
 
-```text
+```
 src/
 ├── index.ts           # CLI entry point (command routing)
 ├── lib/
-│   ├── types.ts       # TypeScript interfaces (Config, Settings)
+│   ├── types.ts       # TypeScript interfaces (Config, ProjectConfig, Settings)
 │   ├── config.ts      # YAML config loader with validation
-│   ├── proxy.ts       # HTTP/WebSocket reverse proxy + port discovery
-│   ├── systemd.ts     # systemd --user service management
+│   ├── proxy.ts       # HTTP/WebSocket reverse proxy on port 80
+│   ├── systemd.ts     # Systemd stubs (proxy-only mode)
 │   └── completions.ts # Shell completions
-└── cli/               # CLI commands (init, start, stop, alias, status, logs, completions)
+└── cli/               # CLI commands (init, add, remove, list, start, stop, status, logs, completions)
 ```
 
 ## Commands
@@ -26,33 +26,15 @@ src/
 | Command | Description |
 |---------|-------------|
 | `lazydev init` | Initialize config, setup dnsmasq |
+| `lazydev add --port <n>` | Add a project (requires port) |
+| `lazydev remove <name>` | Remove a project |
+| `lazydev list` | List configured projects |
 | `lazydev start` | Start the proxy daemon |
 | `lazydev stop` | Stop the proxy daemon |
 | `lazydev restart` | Restart the proxy daemon |
-| `lazydev alias <short> <project>` | Create alias |
-| `lazydev unalias <short>` | Remove alias |
-| `lazydev status [name]` | Show running dev servers |
+| `lazydev status [name]` | Show project status |
 | `lazydev logs` | View proxy logs |
 | `lazydev completions` | Install shell completions |
-
-## How It Works (v0.3.0+)
-
-```text
-User visits: fleetflow.localhost
-     ↓
-Proxy checks: ~/projects/fleetflow/ exists?
-     ↓
-Find process with cwd = that path (using ss + /proc)
-     ↓
-Get port that process is listening on
-     ↓
-Proxy request to that port
-```
-
-**No `lazydev add` needed!** Just:
-1. Start the proxy: `lazydev start`
-2. Start your dev server: `cd ~/projects/myapp && bun dev`
-3. Visit: `http://myapp.localhost`
 
 ## Configuration
 
@@ -61,28 +43,21 @@ Config location: `~/.config/lazydev/config.yaml`
 ```yaml
 settings:
   proxy_port: 80
-  projects_dir: ~/projects    # Where to look for projects (default: ~/projects)
 
-# Optional: aliases for shorter URLs
-aliases:
-  ff: fleetflow              # ff.localhost → ~/projects/fleetflow
-  api: backend-service       # api.localhost → ~/projects/backend-service
+projects:
+  myproject:
+    port: 3000
+    aliases: [mp]      # optional: access via http://mp.localhost
+    disabled: false    # optional
 ```
 
 ## Proxy Flow
 
 1. Request arrives at `project.localhost`
-2. Check if `~/projects/project/` exists
-3. Find listening process with cwd matching project path
-4. Proxy request to discovered port
-5. If no server running: return 503 with helpful message
-
-## Key Functions
-
-### `findPortForProject(projectPath, includeSubdirs?)`
-Uses `ss -tlnp` + `/proc/{pid}/cwd` to find which port a dev server is listening on.
-- Returns the port number if found
-- `includeSubdirs=true` for monorepos (matches if cwd is a subdirectory)
+2. Extract subdomain → lookup project config
+3. If disabled: return 503
+4. Proxy request to configured port
+5. Relay response to client
 
 ## Tech Stack
 
@@ -121,23 +96,20 @@ bun run tsc --noEmit
 
 # Run locally
 bun run src/index.ts --help
-bun run src/index.ts status
-bun run src/index.ts alias demo fleetflow
 ```
 
 ## Known Issues / TODO
 
-- [ ] Better HTML error pages for 404/503
-- [ ] Alias tab-completion from config/projects dir
-- [ ] Windows/macOS support (currently Linux-only due to /proc filesystem)
+- [ ] `lazydev logs` stub - returns "not implemented"
+- [ ] Hot reload when config changes
+- [ ] systemd service integration (service file exists but not auto-installed)
+- [ ] Windows/macOS support (currently Linux-only due to dnsmasq)
 
-## Why Zero-Config?
+## Why Proxy-Only?
 
-The previous version required manual `lazydev add --port <n>` for each project.
-v0.3.0 eliminates this by discovering running dev servers automatically using
-Linux process inspection (`/proc` filesystem).
+The previous version attempted scale-to-zero (auto stop/start dev servers). This failed for Nuxt/Vite due to:
+- Lazy compilation: routes compile on first browser request
+- Cold start race conditions: HTTP accepts before ready
+- Complex framework lifecycle: workers, hot reload, background processes
 
-Benefits:
-- No configuration drift (config always matches reality)
-- Works immediately with any project in `~/projects/`
-- Supports monorepos (detects servers in subdirectories)
+Proxy-only is simpler and more reliable - you control your dev server, LazyDev handles routing.

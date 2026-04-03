@@ -1,0 +1,12 @@
+[Unit]
+Description=LazyDev - Scale-to-zero dev server manager
+After=network.target dnsmasq.service
+
+[Service]
+Type=simple
+ExecStart=/home/snehit/.bun/bin/bun run /home/snehit/projects/lazydev/src/index.ts start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

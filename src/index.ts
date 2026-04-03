@@ -6,9 +6,12 @@ const args = parseArgs({
   options: {
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
+    port: { type: "string", short: "p" },
     json: { type: "boolean", short: "j" },
     follow: { type: "boolean", short: "f" },
     lines: { type: "string", short: "l" },
+    name: { type: "string", short: "n" },
+    yes: { type: "boolean", short: "y" },
     shell: { type: "string" },
   },
   allowPositionals: true,
@@ -18,7 +21,7 @@ const [command, ...positionals] = args.positionals;
 
 async function run() {
   if (args.values.version) {
-    console.log("lazydev v0.4.0");
+    console.log("lazydev v0.2.0");
     return;
   }
   
@@ -32,33 +35,37 @@ async function run() {
       await import("./cli/init").then((m) => m.run());
       break;
     case "add":
+      if (!args.values.port) {
+        console.error("Error: --port is required");
+        console.error("Usage: lazydev add --port <port> [--name <name>]");
+        process.exit(1);
+      }
+      const portStr = args.values.port!;
+      const port = parseInt(portStr);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        console.error(`Invalid port: ${portStr}. Must be 1-65535.`);
+        process.exit(1);
+      }
+      await import("./cli/add").then((m) => m.run({
+        name: args.values.name ?? undefined,
+        port,
+        nonInteractive: args.values.yes ?? false,
+      }));
+      break;
     case "remove":
-      console.log(`\n⚠️  The '${command}' command has been removed in v2.\n`);
-      console.log("LazyDev now automatically discovers your running dev servers.");
-      console.log("Just start your dev server and visit http://<project>.localhost\n");
-      console.log("Example:");
-      console.log("  cd ~/projects/myapp");
-      console.log("  bun dev");
-      console.log("  # Visit http://myapp.localhost\n");
-      process.exit(0);
+      await import("./cli/remove").then((m) => m.run(positionals[0]));
       break;
     case "list":
       await import("./cli/list").then((m) => m.run(args.values.json));
       break;
     case "start":
-      await import("./cli/start").then((m) => m.run());
+      await import("./cli/start").then((m) => m.run(true));
       break;
     case "stop":
       await import("./cli/stop").then((m) => m.run());
       break;
     case "restart":
       await import("./cli/restart").then((m) => m.run());
-      break;
-    case "alias":
-      await import("./cli/alias").then((m) => m.run(positionals[0], positionals[1]));
-      break;
-    case "unalias":
-      await import("./cli/unalias").then((m) => m.run(positionals[0]));
       break;
     case "status":
       await import("./cli/status").then((m) => m.run(positionals[0]));
@@ -73,9 +80,6 @@ async function run() {
     case "completions":
       await import("./cli/completions").then((m) => m.run(args.values.shell));
       break;
-    case "run":
-      await import("./cli/start").then((m) => m.run(true));
-      break;
     default:
       console.error(`Unknown command: ${command}`);
       showHelp();
@@ -85,34 +89,37 @@ async function run() {
 
 function showHelp() {
   console.log(`
-lazydev - Zero-config dev server proxy
+lazydev - Proxy-only dev server manager
 
 Usage: lazydev <command> [options]
 
 Commands:
-  init              Initialize lazydev (setup dnsmasq, port 80)
+  init              Initialize lazydev (create config, setup dnsmasq)
+  add --port <n>    Add a project (must start your dev server manually)
+  remove <name>     Remove a project
+  list              List all configured projects
   start             Start the proxy daemon
   stop              Stop the proxy daemon
   restart           Restart the proxy daemon
-  alias <a> <p>     Add alias <a> for project <p>
-  unalias <a>       Remove alias <a>
-  status [name]     Show running dev servers
+  status [name]     Show status of all projects or specific one
   logs              Show daemon logs
   completions       Install shell completions
 
 Options:
   -h, --help        Show this help
   -v, --version     Show version
+  -j, --json        Output as JSON
   -f, --follow      Follow logs in real-time
   -l, --lines <n>   Number of log lines (default: 100)
 
-How it works:
-  1. Start the proxy:  lazydev start
-  2. Start your dev server:  cd ~/projects/myapp && bun dev
-  3. Visit:  http://myapp.localhost
+Add Options:
+  -n, --name <name>     Project name (default: project<port>)
+  -p, --port <port>     Port your dev server runs on (required)
+  -y, --yes             Skip interactive prompts
 
-LazyDev automatically discovers running dev servers in ~/projects/
-and routes <name>.localhost to the correct port. No config needed!
+Note:
+  LazyDev now works in proxy-only mode. You start your own dev servers
+  (e.g., bun dev, npm run dev), and LazyDev routes *.localhost to them.
 `);
 }
 
