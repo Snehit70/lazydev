@@ -51,6 +51,20 @@ export function getServiceStatus(): { active: boolean; canControl: boolean } {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForServiceState(active: boolean): Promise<boolean> {
+  for (let i = 0; i < 10; i++) {
+    if (getServiceStatus().active === active) {
+      return true;
+    }
+    await sleep(200);
+  }
+  return getServiceStatus().active === active;
+}
+
 export async function ensureService(): Promise<{ success: boolean; message: string }> {
   if (!isSystemdAvailable()) {
     return { success: false, message: "systemd not available" };
@@ -92,8 +106,12 @@ export async function startService(): Promise<{ success: boolean; message: strin
     
     // Start service
     execSync(`systemctl start ${SERVICE_NAME}`, { stdio: "ignore" });
-    
-    return { success: true, message: "Service started" };
+
+    if (await waitForServiceState(true)) {
+      return { success: true, message: "Service started" };
+    }
+
+    return { success: false, message: "Service failed to become active" };
   } catch (err) {
     return { success: false, message: `Failed to start service: ${err}` };
   }
@@ -106,7 +124,10 @@ export async function stopService(): Promise<{ success: boolean; message: string
   
   try {
     execSync(`systemctl stop ${SERVICE_NAME}`, { stdio: "ignore" });
-    return { success: true, message: "Service stopped" };
+    if (await waitForServiceState(false)) {
+      return { success: true, message: "Service stopped" };
+    }
+    return { success: false, message: "Service failed to stop" };
   } catch {
     return { success: false, message: "Service not running" };
   }
@@ -119,9 +140,12 @@ export async function restartService(): Promise<{ success: boolean; message: str
   
   try {
     execSync(`systemctl restart ${SERVICE_NAME}`, { stdio: "ignore" });
-    return { success: true, message: "Service restarted" };
-  } catch {
-    return { success: false, message: "Failed to restart service" };
+    if (await waitForServiceState(true)) {
+      return { success: true, message: "Service restarted" };
+    }
+    return { success: false, message: "Service failed to become active after restart" };
+  } catch (err) {
+    return { success: false, message: `Failed to restart service: ${err}` };
   }
 }
 
