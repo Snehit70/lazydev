@@ -1,12 +1,21 @@
 import { readdirSync, statSync } from "fs";
 import { loadConfig, expandTilde } from "../lib/config";
 import { findPortForProject, getProjectsDir, setConfig } from "../lib/proxy";
+import { getServiceStatus, isSystemdAvailable } from "../lib/systemd";
 
 interface ProjectStatus {
   name: string;
   path: string;
   port: number | null;
   running: boolean;
+}
+
+function getProxyStatusLine(): string {
+  if (!isSystemdAvailable()) {
+    return "foreground/manual";
+  }
+
+  return getServiceStatus().active ? "systemd active" : "systemd inactive";
 }
 
 async function scanProjects(): Promise<ProjectStatus[]> {
@@ -55,17 +64,23 @@ export async function run(name?: string) {
       : expandTilde("~/projects");
     
     if (name) {
-      // Check specific project
-      const projectPath = `${projectsDir}/${name}`;
-      const port = await findPortForProject(projectPath);
+      const projectName = config.aliases?.[name] ?? name;
+      const projectPath = `${projectsDir}/${projectName}`;
+      const port = await findPortForProject(projectPath, true);
       
       if (port) {
         console.log(`Project: ${name}`);
+        if (projectName !== name) {
+          console.log(`  Alias:  ${name} → ${projectName}`);
+        }
         console.log(`  Status: 🟢 running`);
         console.log(`  Port:   ${port}`);
         console.log(`  URL:    http://${name}.localhost`);
       } else {
         console.log(`Project: ${name}`);
+        if (projectName !== name) {
+          console.log(`  Alias:  ${name} → ${projectName}`);
+        }
         console.log(`  Status: 🔴 not running`);
         console.log(`  Path:   ${projectPath}`);
         console.log(`\nStart with: cd ${projectPath} && bun dev`);
@@ -78,6 +93,7 @@ export async function run(name?: string) {
     const running = projects.filter(p => p.running);
     const stopped = projects.filter(p => !p.running);
     
+    console.log(`\nProxy: ${getProxyStatusLine()}`);
     console.log(`\nProjects dir: ${projectsDir}\n`);
     
     if (running.length > 0) {
@@ -97,7 +113,9 @@ export async function run(name?: string) {
     if (Object.keys(aliases).length > 0) {
       console.log("Aliases:");
       for (const [alias, target] of Object.entries(aliases)) {
-        console.log(`  ${alias} → ${target}`.padEnd(30) + `http://${alias}.localhost`);
+        const targetProject = running.find((project) => project.name === target);
+        const suffix = targetProject ? `port ${targetProject.port}` : "not running";
+        console.log(`  ${alias} → ${target}`.padEnd(30) + `http://${alias}.localhost (${suffix})`);
       }
       console.log("");
     }
@@ -118,6 +136,8 @@ export async function run(name?: string) {
       console.log("Start one with:");
       console.log("  cd ~/projects/<name>");
       console.log("  bun dev\n");
+    } else {
+      console.log(`Summary: ${running.length} running, ${stopped.length} stopped\n`);
     }
     
   } catch (err: unknown) {

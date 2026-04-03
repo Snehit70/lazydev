@@ -7,8 +7,22 @@ import { info, error } from "./logger";
 import type { Config } from "./types";
 
 const PROJECTS_DIR = expandTilde("~/projects");
+const PORT_CACHE_TTL_MS = 2000;
+
+interface PortCacheEntry {
+  port: number | null;
+  expiresAt: number;
+}
+
+const portCache = new Map<string, PortCacheEntry>();
 
 export async function findPortForProject(projectPath: string, includeSubdirs = false): Promise<number | null> {
+  const cacheKey = `${projectPath}:${includeSubdirs ? "subdirs" : "exact"}`;
+  const cached = portCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.port;
+  }
+
   try {
     const ssOutput = execSync("ss -tlnp", { encoding: "utf-8", timeout: 5000 });
     const lines = ssOutput.split("\n").slice(1);
@@ -28,10 +42,12 @@ export async function findPortForProject(projectPath: string, includeSubdirs = f
         const cwd = await readlink(`/proc/${pid}/cwd`);
         // Exact match
         if (cwd === projectPath) {
+          portCache.set(cacheKey, { port, expiresAt: Date.now() + PORT_CACHE_TTL_MS });
           return port;
         }
         // Subdirectory match (for monorepos)
         if (includeSubdirs && cwd.startsWith(projectPath + "/")) {
+          portCache.set(cacheKey, { port, expiresAt: Date.now() + PORT_CACHE_TTL_MS });
           return port;
         }
       } catch {
@@ -42,7 +58,12 @@ export async function findPortForProject(projectPath: string, includeSubdirs = f
     console.error("[findPortForProject] Error:", err);
   }
 
+  portCache.set(cacheKey, { port: null, expiresAt: Date.now() + PORT_CACHE_TTL_MS });
   return null;
+}
+
+export function clearPortCache(): void {
+  portCache.clear();
 }
 
 export function projectExists(projectName: string): boolean {
@@ -116,6 +137,7 @@ let projectsDir = PROJECTS_DIR;
 const aliasToProject = new Map<string, string>();
 
 export function setConfig(cfg: Config): void {
+  clearPortCache();
   projectsDir = cfg.settings.projects_dir 
     ? expandTilde(cfg.settings.projects_dir) 
     : PROJECTS_DIR;

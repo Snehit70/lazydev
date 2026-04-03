@@ -11,9 +11,6 @@ const DEFAULT_CONFIG = `# LazyDev Configuration
 
 settings:
   proxy_port: 80
-
-projects:
-  # Add projects with: lazydev add --port 3000
 `;
 
 const DNSMASQ_CONFIG = `# LazyDev DNS - wildcard *.localhost
@@ -61,8 +58,8 @@ export async function run() {
   
   console.log("\n--- Done ---");
   console.log("Next steps:");
-  console.log("  1. Add a project: lazydev add --port 3000");
-  console.log("  2. Start your dev server: bun dev (or npm run dev)");
-  console.log("  3. Start proxy:       lazydev start");
-  console.log("  4. Access at:         http://myproject.localhost");
+  console.log("  1. Start your dev server: cd ~/projects/myproject && bun dev");
+  console.log("  2. Start proxy:       lazydev start");
+  console.log("  3. Access at:         http://myproject.localhost");
+  console.log("  4. Optional alias:    lazydev alias mp myproject");
 }

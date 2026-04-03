@@ -4,17 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=snehit
-Group=snehit
 WorkingDirectory=/home/snehit
-ExecStartPre=/bin/sleep 1
-ExecStart=/home/snehit/.bun/bin/bun /home/snehit/projects/lazydev/src/index.ts run
+ExecStart=/usr/bin/env bash -lc 'export HOME=/home/snehit; export PATH=/home/snehit/.bun/bin:$PATH; exec bun /home/snehit/projects/lazydev/src/index.ts run'
 Restart=always
 RestartSec=5
 Environment=HOME=/home/snehit
 Environment="PATH=/home/snehit/.bun/bin:/usr/local/bin:/usr/bin:/bin"
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=default.target

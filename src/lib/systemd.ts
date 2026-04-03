@@ -1,15 +1,20 @@
 import { execSync } from "child_process";
-import { existsSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
 const SERVICE_NAME = "lazydev";
-const SERVICE_FILE_PATH = `/etc/systemd/system/${SERVICE_NAME}.service`;
+const SERVICE_DIR = join(homedir(), ".config", "systemd", "user");
+const SERVICE_FILE_PATH = join(SERVICE_DIR, `${SERVICE_NAME}.service`);
+
+function runSystemctl(command: string): string {
+  return execSync(`systemctl --user ${command}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
 
 function getServiceFile(): string {
-  const bunPath = process.argv[0];
   const scriptPath = join(process.cwd(), "src/index.ts");
-  const user = process.env["USER"] ?? "snehit";
+  const home = homedir();
+  const bunBinDir = join(home, ".bun", "bin");
   
   return `[Unit]
 Description=LazyDev - Zero-config dev server proxy
@@ -17,12 +22,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=${user}
-WorkingDirectory=${homedir()}
-ExecStart=${bunPath} ${scriptPath} run
+WorkingDirectory=${home}
+ExecStart=/usr/bin/env bash -lc 'export HOME=${home}; export PATH=${bunBinDir}:$PATH; exec bun ${scriptPath} run'
 Restart=always
 RestartSec=5
-Environment=HOME=${homedir()}
+Environment=HOME=${home}
+Environment=PATH=${bunBinDir}:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target
@@ -31,7 +36,7 @@ WantedBy=default.target
 
 export function isSystemdAvailable(): boolean {
   try {
-    execSync("systemctl is-system-running", { stdio: "ignore" });
+    runSystemctl("is-system-running");
     return true;
   } catch {
     return false;
@@ -44,7 +49,7 @@ export function getServiceStatus(): { active: boolean; canControl: boolean } {
   }
   
   try {
-    const output = execSync(`systemctl is-active ${SERVICE_NAME}`, { encoding: "utf-8" }).trim();
+    const output = runSystemctl(`is-active ${SERVICE_NAME}`);
     return { active: output === "active", canControl: true };
   } catch {
     return { active: false, canControl: true };
@@ -71,17 +76,23 @@ export async function ensureService(): Promise<{ success: boolean; message: stri
   }
   
   try {
-    // Check if service file exists
-    if (!existsSync(SERVICE_FILE_PATH)) {
-      const serviceContent = getServiceFile();
-      writeFileSync(SERVICE_FILE_PATH, serviceContent, { mode: 0o644 });
-      
-      // Reload systemd
-      execSync("systemctl daemon-reload", { stdio: "ignore" });
+    const serviceContent = getServiceFile();
+
+    if (!existsSync(SERVICE_DIR)) {
+      mkdirSync(SERVICE_DIR, { recursive: true });
     }
-    
-    // Enable service
-    execSync(`systemctl enable ${SERVICE_NAME}`, { stdio: "ignore" });
+
+    if (!existsSync(SERVICE_FILE_PATH)) {
+      writeFileSync(SERVICE_FILE_PATH, serviceContent, { mode: 0o644 });
+    } else {
+      const currentContent = readFileSync(SERVICE_FILE_PATH, "utf-8");
+      if (currentContent !== serviceContent) {
+        writeFileSync(SERVICE_FILE_PATH, serviceContent, { mode: 0o644 });
+      }
+    }
+
+    runSystemctl("daemon-reload");
+    runSystemctl(`enable ${SERVICE_NAME}`);
     
     return { success: true, message: "Service created and enabled" };
   } catch (err) {
@@ -105,7 +116,7 @@ export async function startService(): Promise<{ success: boolean; message: strin
     await ensureService();
     
     // Start service
-    execSync(`systemctl start ${SERVICE_NAME}`, { stdio: "ignore" });
+    runSystemctl(`start ${SERVICE_NAME}`);
 
     if (await waitForServiceState(true)) {
       return { success: true, message: "Service started" };
@@ -123,7 +134,7 @@ export async function stopService(): Promise<{ success: boolean; message: string
   }
   
   try {
-    execSync(`systemctl stop ${SERVICE_NAME}`, { stdio: "ignore" });
+    runSystemctl(`stop ${SERVICE_NAME}`);
     if (await waitForServiceState(false)) {
       return { success: true, message: "Service stopped" };
     }
@@ -139,7 +150,7 @@ export async function restartService(): Promise<{ success: boolean; message: str
   }
   
   try {
-    execSync(`systemctl restart ${SERVICE_NAME}`, { stdio: "ignore" });
+    runSystemctl(`restart ${SERVICE_NAME}`);
     if (await waitForServiceState(true)) {
       return { success: true, message: "Service restarted" };
     }

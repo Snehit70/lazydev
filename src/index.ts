@@ -18,7 +18,7 @@ const [command, ...positionals] = args.positionals;
 
 async function run() {
   if (args.values.version) {
-    console.log("lazydev v0.3.0");
+    console.log("lazydev v0.4.0");
     return;
   }
   
@@ -46,13 +46,19 @@ async function run() {
       await import("./cli/list").then((m) => m.run(args.values.json));
       break;
     case "start":
-      await import("./cli/start").then((m) => m.run(true));
+      await import("./cli/start").then((m) => m.run());
       break;
     case "stop":
       await import("./cli/stop").then((m) => m.run());
       break;
     case "restart":
       await import("./cli/restart").then((m) => m.run());
+      break;
+    case "alias":
+      await import("./cli/alias").then((m) => m.run(positionals[0], positionals[1]));
+      break;
+    case "unalias":
+      await import("./cli/unalias").then((m) => m.run(positionals[0]));
       break;
     case "status":
       await import("./cli/status").then((m) => m.run(positionals[0]));
@@ -88,6 +94,8 @@ Commands:
   start             Start the proxy daemon
   stop              Stop the proxy daemon
   restart           Restart the proxy daemon
+  alias <a> <p>     Add alias <a> for project <p>
+  unalias <a>       Remove alias <a>
   status [name]     Show running dev servers
   logs              Show daemon logs
   completions       Install shell completions

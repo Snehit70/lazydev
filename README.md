@@ -1,6 +1,6 @@
 # LazyDev
 
-Proxy-only dev server manager for Linux.
+Zero-config dev server proxy for Linux.
 
 **Key feature**: Clean subdomain URLs (`*.localhost`) routing to your manually-started dev servers.
 
@@ -19,26 +19,26 @@ lazydev init
 cd ~/projects/myproject
 bun dev
 
-# 2. Add the project (tell LazyDev which port to route)
-lazydev add --port 3000 --name myproject
-
-# 3. Start the proxy
+# 2. Start the proxy
 lazydev start
 
-# 4. Access in browser
+# 3. Access in browser
 # http://myproject.localhost
+
+# Optional: create a short alias
+lazydev alias mp myproject
+# http://mp.localhost
 ```
 
 ## CLI Commands
 
 ```
 lazydev init              # Setup config, dnsmasq, port 80
-lazydev add --port <n>    # Add project (requires --port flag)
-lazydev remove <name>     # Remove project
-lazydev list              # List all projects
 lazydev start             # Start proxy daemon
 lazydev stop              # Stop proxy daemon
 lazydev restart           # Restart proxy daemon
+lazydev alias <a> <p>     # Add alias <a> for project <p>
+lazydev unalias <a>       # Remove alias <a>
 lazydev status [name]     # Show status
 lazydev logs              # View proxy logs
 lazydev completions       # Install shell completions
@@ -47,11 +47,11 @@ lazydev completions       # Install shell completions
 ## How It Works
 
 1. **You start your dev server** (e.g., `bun dev`, `npm run dev`)
-2. **Add project to LazyDev** with the port number
+2. **LazyDev discovers the listening port** from the running process
 3. **LazyDev proxies** `*.localhost` requests to your dev server
 
 ```
-Browser → http://myproject.localhost → LazyDev Proxy → localhost:3000 (your dev server)
+Browser → http://myproject.localhost → LazyDev Proxy → discovered localhost:PORT
 ```
 
 ## Configuration
@@ -61,12 +61,10 @@ Config file: `~/.config/lazydev/config.yaml`
 ```yaml
 settings:
   proxy_port: 80
+  projects_dir: ~/projects
 
-projects:
-  myproject:
-    port: 3000
-    aliases: [mp]      # optional: access via http://mp.localhost
-    disabled: false    # optional: temporarily disable
+aliases:
+  mp: myproject
 ```
 
 ## Why Proxy-Only?
@@ -91,6 +89,7 @@ Proxy-only mode is simpler and more reliable - you control your dev server, Lazy
 - Bun 1.2+
 - Linux
 - dnsmasq (for DNS)
+- systemd user session (recommended for background service mode)
 
 ## Setup
 

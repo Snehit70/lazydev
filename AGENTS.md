@@ -16,9 +16,9 @@ src/
 │   ├── types.ts       # TypeScript interfaces (Config, Settings)
 │   ├── config.ts      # YAML config loader with validation
 │   ├── proxy.ts       # HTTP/WebSocket reverse proxy + port discovery
-│   ├── systemd.ts     # Systemd stubs
+│   ├── systemd.ts     # systemd --user service management
 │   └── completions.ts # Shell completions
-└── cli/               # CLI commands (init, start, stop, status, logs, completions)
+└── cli/               # CLI commands (init, start, stop, alias, status, logs, completions)
 ```
 
 ## Commands
@@ -29,6 +29,8 @@ src/
 | `lazydev start` | Start the proxy daemon |
 | `lazydev stop` | Stop the proxy daemon |
 | `lazydev restart` | Restart the proxy daemon |
+| `lazydev alias <short> <project>` | Create alias |
+| `lazydev unalias <short>` | Remove alias |
 | `lazydev status [name]` | Show running dev servers |
 | `lazydev logs` | View proxy logs |
 | `lazydev completions` | Install shell completions |
@@ -120,13 +122,13 @@ bun run tsc --noEmit
 # Run locally
 bun run src/index.ts --help
 bun run src/index.ts status
+bun run src/index.ts alias demo fleetflow
 ```
 
 ## Known Issues / TODO
 
-- [ ] `lazydev logs` stub - returns "not implemented"
-- [ ] Hot reload when config changes
-- [ ] systemd service integration (service file exists but not auto-installed)
+- [ ] Better HTML error pages for 404/503
+- [ ] Alias tab-completion from config/projects dir
 - [ ] Windows/macOS support (currently Linux-only due to /proc filesystem)
 
 ## Why Zero-Config?
