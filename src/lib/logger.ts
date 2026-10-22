@@ -1,10 +1,14 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "fs";
 import { homedir } from "os";
+import { basename } from "path";
 import { watch } from "fs";
 
-const LOG_DIR = `${homedir()}/.local/share/lazydev`;
+const LOG_DIR = process.env["LAZYDEV_DATA_DIR"] || `${homedir()}/.local/share/lazydev`;
 const LOG_FILE = `${LOG_DIR}/proxy.log`;
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const ROTATION_CHECK_INTERVAL = 200;
+
+let writesSinceRotationCheck = ROTATION_CHECK_INTERVAL;
 
 function ensureLogDir(): void {
   if (!existsSync(LOG_DIR)) {
@@ -33,6 +37,8 @@ export function debug(message: string): void {
 }
 
 function rotateLogIfTooLarge(): void {
+  if (++writesSinceRotationCheck < ROTATION_CHECK_INTERVAL) return;
+  writesSinceRotationCheck = 0;
   try {
     if (!existsSync(LOG_FILE)) return;
     const stat = statSync(LOG_FILE);
@@ -45,15 +51,19 @@ function rotateLogIfTooLarge(): void {
 }
 
 function log(level: string, message: string): void {
-  ensureLogDir();
   rotateLogIfTooLarge();
   const timestamp = formatTimestamp();
   const logLine = `${timestamp} [${level}] ${message}`;
   
   try {
     appendFileSync(LOG_FILE, logLine + "\n");
-  } catch (err) {
-    console.error("Failed to write to log file:", err);
+  } catch {
+    try {
+      ensureLogDir();
+      appendFileSync(LOG_FILE, logLine + "\n");
+    } catch (err) {
+      console.error("Failed to write to log file:", err);
+    }
   }
   
   console.log(logLine);
@@ -97,22 +107,26 @@ export function tailLogs(
     // Start from beginning if can't read
   }
   
-  const watcher = watch(LOG_FILE, (eventType) => {
-    if (eventType === "change") {
-      try {
-        if (!existsSync(LOG_FILE)) return;
-        
-        const content = readFileSync(LOG_FILE, "utf-8");
-        const newContent = content.slice(position);
-        position = content.length;
-        
-        const newLines = newContent.split("\n").filter(line => line.length > 0);
-        for (const line of newLines) {
-          onLine(line);
-        }
-      } catch {
-        // File might be locked or deleted, ignore
+  const logBasename = basename(LOG_FILE);
+  
+  const watcher = watch(LOG_DIR, (eventType, filename) => {
+    if (filename !== logBasename) return;
+    if (eventType !== "change" && eventType !== "rename") return;
+    
+    try {
+      if (!existsSync(LOG_FILE)) return;
+      
+      const content = readFileSync(LOG_FILE, "utf-8");
+      if (content.length < position) position = 0;
+      const newContent = content.slice(position);
+      position = content.length;
+      
+      const newLines = newContent.split("\n").filter(line => line.length > 0);
+      for (const line of newLines) {
+        onLine(line);
       }
+    } catch {
+      // File might be locked or deleted, ignore
     }
   });
   

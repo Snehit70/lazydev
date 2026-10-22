@@ -1,100 +1,46 @@
 import { serve, type Server } from "bun";
-import { readlink } from "fs/promises";
-import { execSync } from "child_process";
-import { existsSync, watch } from "fs";
-import { dirname, basename } from "path";
-import { expandTilde } from "./config";
+import { readFileSync, watch } from "fs";
+import { dirname } from "path";
+import { resolveProjectsDirs } from "./config";
+import { findPortListener, getListeners, hostPort, invalidateListeners, pickListener, type Listener, type Target } from "./discovery";
+import { suggestDevCommand } from "./hints";
 import { info, error } from "./logger";
+import { findProjectDir, parseHost, resolveRoute, type Route } from "./routing";
 import type { Config } from "./types";
 
-const PROJECTS_DIR = expandTilde("~/projects");
-const PORT_CACHE_TTL_MS = 10000;
+const UPSTREAM_WS_TIMEOUT_MS = 5000;
 
-interface PortCacheEntry {
-  port: number | null;
-  expiresAt: number;
-}
+// Headers that describe a single connection and must not be forwarded.
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
 
-const portCache = new Map<string, PortCacheEntry>();
-const inflightScans = new Map<string, Promise<number | null>>();
-
-export async function findPortForProject(projectPath: string, includeSubdirs = false): Promise<number | null> {
-  const cacheKey = `${projectPath}:${includeSubdirs ? "subdirs" : "exact"}`;
-  const cached = portCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.port;
-  }
-
-  const existing = inflightScans.get(cacheKey);
-  if (existing) {
-    const port = await existing;
-    portCache.set(cacheKey, { port, expiresAt: Date.now() + PORT_CACHE_TTL_MS });
-    return port;
-  }
-
-  const scan = (async (): Promise<number | null> => {
-    try {
-      const ssOutput = execSync("ss -tlnp", { encoding: "utf-8", timeout: 5000 });
-      const lines = ssOutput.split("\n").slice(1);
-
-      for (const line of lines) {
-        const portMatch = line.match(/:(\d+)\s/);
-        const pidMatch = line.match(/pid=(\d+)/);
-
-        if (!portMatch?.[1] || !pidMatch?.[1]) continue;
-
-        const port = parseInt(portMatch[1], 10);
-        const pid = parseInt(pidMatch[1], 10);
-
-        if (port < 1024) continue;
-
-        try {
-          const cwd = await readlink(`/proc/${pid}/cwd`);
-          if (cwd === projectPath) {
-            return port;
-          }
-          if (includeSubdirs && cwd.startsWith(projectPath + "/")) {
-            return port;
-          }
-        } catch {
-          // Process may have exited
-        }
-      }
-    } catch (err) {
-      console.error("[findPortForProject] Error:", err);
-    }
-
-    return null;
-  })();
-
-  inflightScans.set(cacheKey, scan);
-  const port = await scan;
-  inflightScans.delete(cacheKey);
-  portCache.set(cacheKey, { port, expiresAt: Date.now() + PORT_CACHE_TTL_MS });
-  return port;
-}
-
-export function clearPortCache(): void {
-  portCache.clear();
-}
-
-export function projectExists(projectName: string): boolean {
-  const projectPath = `${projectsDir}/${projectName}`;
-  return existsSync(projectPath);
-}
-
-export function getProjectPath(projectName: string): string {
-  return `${projectsDir}/${projectName}`;
-}
+// Request headers forwarded on the upstream WebSocket handshake.
+const WS_FORWARD_HEADERS = ["cookie", "origin", "authorization", "user-agent", "accept-language"];
 
 let configWatcher: ReturnType<typeof watch> | null = null;
 
+// Shown on "not running" pages when some dev servers can't be discovered.
+let discoveryWarning: string | null = null;
+
+export function setDiscoveryWarning(warning: string | null): void {
+  discoveryWarning = warning;
+}
+
 function debounce<T extends (...args: Parameters<T>) => void>(
-  fn: T, 
+  fn: T,
   ms: number
 ): (...args: Parameters<T>) => void {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  
+
   return (...args: Parameters<T>) => {
     if (timeoutId) {
       clearTimeout(timeoutId);
@@ -110,20 +56,30 @@ export function watchConfig(configPath: string, onReload: () => void): void {
   if (configWatcher) {
     configWatcher.close();
   }
-  
+
+  const readConfigText = () => {
+    try {
+      return readFileSync(configPath, "utf-8");
+    } catch {
+      return null;
+    }
+  };
+  let lastText = readConfigText();
+
   const debouncedReload = debounce(() => {
+    const text = readConfigText();
+    if (text === null || text === lastText) return;
+    lastText = text;
     info(`Config file changed, reloading...`);
     onReload();
-  }, 500);
-  
+  }, 300);
+
   try {
     const configDir = dirname(configPath);
-    const configFile = basename(configPath);
-    configWatcher = watch(configDir, (eventType, filename) => {
-      if (filename === configFile && (eventType === "change" || eventType === "rename")) {
-        debouncedReload();
-      }
-    });
+    // Atomic saves (lazydev alias, most editors) rename a temp file over the
+    // config, and Bun only reports the temp file's name. React to any event in
+    // the directory and compare contents instead.
+    configWatcher = watch(configDir, () => debouncedReload());
     info(`Watching config directory for changes: ${configDir}`);
   } catch (err) {
     error(`Failed to watch config: ${err}`);
@@ -139,32 +95,43 @@ export function stopConfigWatcher(): void {
 }
 
 interface WebSocketData {
-  projectName: string;
-  targetPort: number;
-  targetPath: string;
-  targetWs?: WebSocket;
-  connected: boolean;
+  upstream: WebSocket;
+  /** Messages the upstream sent before the client socket finished opening. */
+  pending: Array<string | ArrayBuffer>;
+  client: { send(data: string | ArrayBuffer): unknown; close(code?: number, reason?: string): void } | null;
+  upstreamClosed: { code: number; reason: string } | null;
 }
 
-let server: Server<WebSocketData> | null = null;
-let projectsDir = PROJECTS_DIR;
-const aliasToProject = new Map<string, string>();
+/** The first server is the primary; others share its port on other addresses. */
+let servers: Server<WebSocketData>[] = [];
+let config: Config = { settings: { proxy_port: 80 }, aliases: {} };
+let projectsDirs = resolveProjectsDirs(config);
 
 export function setConfig(cfg: Config): void {
-  clearPortCache();
-  projectsDir = cfg.settings.projects_dir 
-    ? expandTilde(cfg.settings.projects_dir) 
-    : PROJECTS_DIR;
-  
-  aliasToProject.clear();
-  
-  for (const [alias, target] of Object.entries(cfg.aliases ?? {})) {
-    aliasToProject.set(alias.toLowerCase(), target);
+  if (servers.length > 0 && cfg.settings.proxy_port !== config.settings.proxy_port) {
+    info(`proxy_port changed to ${cfg.settings.proxy_port}; restart the proxy to apply it`);
   }
+  config = cfg;
+  projectsDirs = resolveProjectsDirs(cfg);
+  invalidateListeners();
 }
 
-export function getProjectsDir(): string {
-  return projectsDir;
+export function getProjectsDirs(): string[] {
+  return projectsDirs;
+}
+
+/** Addresses the proxy is listening on, e.g. ["127.0.0.1:80", "[::1]:80"]. */
+export function getAddresses(): string[] {
+  return servers.map((s) => hostPort({ host: s.hostname ?? "", port: s.port ?? 0 }));
+}
+
+function ownPort(): number | undefined {
+  return servers[0]?.port;
+}
+
+/** Find the listener serving `projectPath`, excluding the proxy's own port. */
+export async function findListenerForProject(projectPath: string): Promise<Listener | null> {
+  return pickListener(await getListeners(projectsDirs), projectPath, ownPort());
 }
 
 function escapeHtml(value: string): string {
@@ -181,20 +148,32 @@ function prefersHtml(req: Request): boolean {
   return accept.includes("text/html");
 }
 
-function errorPage(status: number, title: string, description: string, details?: string[]): string {
-  const detailList = (details ?? [])
-    .map((detail) => `<li>${escapeHtml(detail)}</li>`)
-    .join("");
+// Polls the current URL and reloads once LazyDev stops answering for it, i.e.
+// once the dev server is up. Gives up after ten minutes.
+const WAIT_SCRIPT = `<script>
+(function poll(tries) {
+  if (tries > 600) return;
+  setTimeout(function () {
+    fetch(location.href, { method: "HEAD", cache: "no-store" })
+      .then(function (res) {
+        if (res.headers.has("x-lazydev-error")) poll(tries + 1);
+        else location.reload();
+      })
+      .catch(function () { poll(tries + 1); });
+  }, 1000);
+})(0);
+</script>`;
 
+function page(title: string, badge: string, body: string, options: { waiting?: boolean } = {}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${status} ${escapeHtml(title)}</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: dark;
       --bg: #0f172a;
       --panel: rgba(15, 23, 42, 0.78);
       --border: rgba(148, 163, 184, 0.24);
@@ -226,6 +205,8 @@ function errorPage(status: number, title: string, description: string, details?:
     }
     .status {
       display: inline-flex;
+      align-items: center;
+      gap: 8px;
       margin-bottom: 16px;
       padding: 6px 10px;
       border-radius: 999px;
@@ -233,10 +214,26 @@ function errorPage(status: number, title: string, description: string, details?:
       color: var(--accent);
       font-size: 13px;
     }
+    .waiting::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) { .waiting::before { animation: none; } }
     h1 {
       margin: 0 0 10px;
       font-size: clamp(28px, 5vw, 44px);
       line-height: 1.05;
+    }
+    h2 {
+      margin: 24px 0 8px;
+      font-size: 15px;
+      color: var(--muted);
+      font-weight: normal;
     }
     p {
       margin: 0;
@@ -249,7 +246,9 @@ function errorPage(status: number, title: string, description: string, details?:
       padding-left: 18px;
       color: var(--text);
     }
-    li { margin: 8px 0; }
+    li { margin: 8px 0; overflow-wrap: anywhere; }
+    a { color: var(--accent); }
+    .port { color: var(--muted); }
     code {
       padding: 2px 6px;
       border-radius: 8px;
@@ -260,51 +259,165 @@ function errorPage(status: number, title: string, description: string, details?:
 </head>
 <body>
   <main class="card">
-    <div class="status">${status}</div>
-    <h1>${escapeHtml(title)}</h1>
-    <p>${escapeHtml(description)}</p>
-    ${detailList ? `<ul>${detailList}</ul>` : ""}
+    <div class="status${options.waiting ? " waiting" : ""}">${escapeHtml(badge)}</div>
+    ${body}
   </main>
+  ${options.waiting ? WAIT_SCRIPT : ""}
 </body>
 </html>`;
 }
 
-function errorResponse(req: Request, status: number, title: string, description: string, details?: string[]): Response {
+interface ErrorInfo {
+  status: number;
+  title: string;
+  description: string;
+  details?: string[];
+  /** Keep the page open and reload it when the dev server comes up. */
+  waiting?: boolean;
+}
+
+function errorResponse(req: Request, info: ErrorInfo): Response {
+  const headers = { "cache-control": "no-store", "x-lazydev-error": String(info.status) };
+
   if (prefersHtml(req)) {
-    return new Response(errorPage(status, title, description, details), {
-      status,
-      headers: { "content-type": "text/html; charset=utf-8" },
+    const detailList = (info.details ?? []).map((detail) => `<li>${escapeHtml(detail)}</li>`).join("");
+    const html = page(
+      `${info.status} ${info.title}`,
+      info.waiting ? `${info.status} · waiting for the dev server` : String(info.status),
+      `<h1>${escapeHtml(info.title)}</h1>
+    <p>${escapeHtml(info.description)}</p>
+    ${detailList ? `<ul>${detailList}</ul>` : ""}`,
+      { waiting: info.waiting ?? false },
+    );
+    return new Response(html, { status: info.status, headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
+  }
+
+  const body = [info.description, ...(info.details ?? [])].join("\n\n") + "\n";
+  return new Response(body, { status: info.status, headers: { ...headers, "content-type": "text/plain; charset=utf-8" } });
+}
+
+/**
+ * Running projects by top-level directory name, in routing order: when two
+ * projects directories contain the same name, only the one that wins routing
+ * is listed.
+ */
+export function runningProjects(listeners: Listener[], dirs: string[], excludePort?: number): Map<string, Listener> {
+  const projects = new Map<string, Listener>();
+  for (const listener of listeners) {
+    const root = dirs.find((dir) => listener.cwd.startsWith(dir + "/"));
+    if (!root) continue;
+    const name = listener.cwd.slice(root.length + 1).split("/")[0];
+    if (!name || name.startsWith(".") || projects.has(name)) continue;
+    const projectPath = `${root}/${name}`;
+    if (findProjectDir(dirs, name) !== projectPath) continue;
+    const picked = pickListener(listeners, projectPath, excludePort);
+    if (picked) projects.set(name, picked);
+  }
+  return new Map([...projects].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function describeDirs(dirs: string[]): string {
+  return dirs.join(", ");
+}
+
+async function dashboardResponse(req: Request): Promise<Response> {
+  const running = runningProjects(await getListeners(projectsDirs), projectsDirs, ownPort());
+  const port = ownPort() !== 80 ? `:${ownPort()}` : "";
+  const link = (name: string) => `http://${name.toLowerCase()}.localhost${port}`;
+
+  const aliases = await Promise.all(Object.entries(config.aliases).map(async ([alias, target]) => {
+    const route = resolveRoute(projectsDirs, config.aliases, alias);
+    const up = route.kind === "port"
+      ? (await findPortListener(route.port)) !== null
+      : route.kind === "project" && (await findListenerForProject(route.path)) !== null;
+    return { alias, target: typeof target === "number" ? `port ${target}` : target, up };
+  }));
+
+  if (!prefersHtml(req)) {
+    const lines = [...running].map(([name, l]) => `${name}\t${link(name)}\t${hostPort(l)}`);
+    return new Response((lines.length ? lines.join("\n") : "No dev servers running.") + "\n", {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
     });
   }
 
-  const body = [description, ...(details ?? [])].join("\n\n");
-  return new Response(body, {
-    status,
-    headers: { "content-type": "text/plain; charset=utf-8" },
+  const projectItems = [...running]
+    .map(([name, l]) => `<li><a href="${escapeHtml(link(name))}">${escapeHtml(name.toLowerCase())}.localhost</a> <span class="port">→ ${escapeHtml(hostPort(l))}</span></li>`)
+    .join("");
+  const aliasItems = aliases
+    .map(({ alias, target, up }) => `<li><a href="${escapeHtml(link(alias))}">${escapeHtml(alias)}.localhost</a> <span class="port">→ ${escapeHtml(target)}${up ? "" : " (not running)"}</span></li>`)
+    .join("");
+  const firstDir = projectsDirs[0] ?? "~/projects";
+
+  const body = `<h1>LazyDev</h1>
+    <p>Dev servers running under <code>${escapeHtml(describeDirs(projectsDirs))}</code>.</p>
+    ${projectItems ? `<ul>${projectItems}</ul>` : `<p style="margin-top:18px">None right now. Start one with <code>cd ${escapeHtml(firstDir)}/&lt;name&gt; &amp;&amp; bun dev</code>.</p>`}
+    ${aliasItems ? `<h2>Aliases</h2><ul>${aliasItems}</ul>` : ""}`;
+
+  return new Response(page("LazyDev", `${running.size} running`, body), {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }
 
-async function proxyRequest(req: Request, targetPort: number): Promise<Response> {
+function stripHopByHop(headers: Headers): void {
+  for (const name of headers.get("connection")?.split(",") ?? []) {
+    headers.delete(name.trim());
+  }
+  for (const name of HOP_BY_HOP_HEADERS) {
+    headers.delete(name);
+  }
+}
+
+/** Rewrite redirects that point at the upstream's own origin back to the public host. */
+function rewriteLocation(location: string, target: Target, publicHost: string): string {
+  for (const host of ["localhost", "127.0.0.1", "[::1]", target.host.includes(":") ? `[${target.host}]` : target.host]) {
+    for (const scheme of ["http", "https"]) {
+      const origin = `${scheme}://${host}:${target.port}`;
+      if (location === origin || location.startsWith(origin + "/") || location.startsWith(origin + "?")) {
+        return `http://${publicHost}${location.slice(origin.length)}`;
+      }
+    }
+  }
+  return location;
+}
+
+function isConnectionError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === "ConnectionRefused" || code === "ECONNREFUSED" || code === "ECONNRESET" || code === "FailedToOpenSocket";
+}
+
+async function forwardRequest(req: Request, target: Target, publicHost: string, clientIp: string | undefined): Promise<Response> {
   const url = new URL(req.url);
-  url.hostname = "localhost";
-  url.port = String(targetPort);
-  
-  const proxyHeaders = new Headers(req.headers);
-  proxyHeaders.set("Host", `localhost:${targetPort}`);
-  
-  const proxyReq = new Request(url.toString(), {
+  const upstreamUrl = `http://${hostPort(target)}${url.pathname}${url.search}`;
+
+  const headers = new Headers(req.headers);
+  stripHopByHop(headers);
+  headers.set("host", `localhost:${target.port}`);
+  headers.set("x-forwarded-host", publicHost);
+  headers.set("x-forwarded-proto", "http");
+  if (clientIp) {
+    const prior = req.headers.get("x-forwarded-for");
+    headers.set("x-forwarded-for", prior ? `${prior}, ${clientIp}` : clientIp);
+  }
+
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+  const response = await fetch(upstreamUrl, {
     method: req.method,
-    headers: proxyHeaders,
-    body: req.body,
+    headers,
+    body: hasBody ? req.body : null,
     redirect: "manual",
+    // Pass compressed bodies through untouched; otherwise Bun inflates them
+    // but keeps the Content-Encoding header and the browser fails to decode.
+    decompress: false,
+    signal: req.signal,
   });
-  
-  const response = await fetch(proxyReq);
-  
+
   const responseHeaders = new Headers(response.headers);
-  responseHeaders.set("X-Forwarded-Host", req.headers.get("host") ?? "localhost");
-  responseHeaders.set("X-Forwarded-Proto", "http");
-  
+  stripHopByHop(responseHeaders);
+  const location = responseHeaders.get("location");
+  if (location) {
+    responseHeaders.set("location", rewriteLocation(location, target, publicHost));
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -312,122 +425,273 @@ async function proxyRequest(req: Request, targetPort: number): Promise<Response>
   });
 }
 
-export async function startProxy(cfg: Config): Promise<Server<WebSocketData>> {
-  setConfig(cfg);
-  
-  server = serve({
-    port: cfg.settings.proxy_port,
-    hostname: "127.0.0.1",
-    idleTimeout: 255,
-    
-    async fetch(req, srv) {
-      const host = req.headers.get("host") ?? "";
-      const subdomainRaw = host.split(".localhost")[0];
-      const subdomain = subdomainRaw?.toLowerCase() ?? "";
-      
-      info(`${req.method} ${host} → "${subdomain}"`);
-      
-      if (!subdomain) {
-        return errorResponse(req, 400, "No project specified", "The request did not include a project subdomain.");
-      }
-      
-      // Resolve alias to project name
-      const projectName = aliasToProject.get(subdomain) ?? subdomain;
-      const projectPath = `${projectsDir}/${projectName}`;
-      
-      // Check if project directory exists
-      if (!existsSync(projectPath)) {
-        return errorResponse(
-          req,
-          404,
-          "Project not found",
-          `LazyDev could not find a local project directory for \"${projectName}\".`,
-          [`Expected directory: ${projectPath}`, "Check the project name or create an alias with `lazydev alias <short> <project>`."],
-        );
-      }
-      
-      // Find running dev server
-      const port = await findPortForProject(projectPath, true);
-      if (!port) {
-        return errorResponse(
-          req,
-          503,
-          "Dev server not running",
-          `LazyDev found the project, but nothing is listening for \"${projectName}\" right now.`,
-          [`Start it with: cd ${projectPath} && bun dev`, `Then refresh http://${subdomain}.localhost`],
-        );
-      }
-      
-      info(`→ localhost:${port}`);
-      
-      if (req.headers.get("upgrade") === "websocket") {
-        info(`WebSocket upgrade`);
-        
-        const url = new URL(req.url);
-        const targetPath = url.pathname + url.search;
-        
-        const upgraded = srv.upgrade(req, {
-          data: { 
-            projectName, 
-            targetPort: port,
-            targetPath,
-            connected: false 
-          } as WebSocketData,
-        });
-        
-        return upgraded 
-          ? new Response(null, { status: 101 }) 
-          : new Response("WebSocket upgrade failed", { status: 500 });
-      }
-      
-      return proxyRequest(req, port);
-    },
-    
-    websocket: {
-      open(ws) {
-        const { targetPort, targetPath } = ws.data;
-        
-        try {
-          const url = `ws://localhost:${targetPort}${targetPath}`;
-          const targetWs = new WebSocket(url);
-          
-          targetWs.onopen = () => {
-            ws.data.targetWs = targetWs;
-            ws.data.connected = true;
-          };
-          
-          targetWs.onmessage = (e) => ws.send(e.data);
-          targetWs.onclose = () => ws.close();
-          targetWs.onerror = (e) => {
-            info(`WebSocket error to localhost:${targetPort}: ${e}`);
-            ws.close();
-          };
-        } catch (err) {
-          error(`WebSocket connection failed to localhost:${targetPort}: ${err}`);
-          ws.close();
-        }
-      },
-      
-      message(ws, message) {
-        ws.data.targetWs?.send(message);
-      },
-      
-      close(ws) {
-        ws.data.targetWs?.close();
-      },
-    },
+function openUpstreamSocket(url: string, protocols: string[], headers: Record<string, string>): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    // Bun's WebSocket client accepts extra handshake headers.
+    const ws = new WebSocket(url, { protocols, headers } as unknown as string[]);
+    ws.binaryType = "arraybuffer";
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error("timed out"));
+    }, UPSTREAM_WS_TIMEOUT_MS);
+    ws.addEventListener("open", () => {
+      clearTimeout(timer);
+      resolve(ws);
+    }, { once: true });
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("connection failed"));
+    }, { once: true });
   });
-  
-  return server;
 }
 
-export function stopProxy(): void {
-  if (server) {
-    server.stop();
-    server = null;
+/** Close codes an endpoint may send; reserved ones (1005, 1006, ...) are mapped to 1000. */
+function sendableCloseCode(code: number): number {
+  return code === 1000 || (code >= 3000 && code <= 4999) ? code : 1000;
+}
+
+async function upgradeWebSocket(req: Request, srv: Server<WebSocketData>, target: Target, label: string): Promise<Response | undefined> {
+  const url = new URL(req.url);
+  const protocols = (req.headers.get("sec-websocket-protocol") ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const headers: Record<string, string> = {};
+  for (const name of WS_FORWARD_HEADERS) {
+    const value = req.headers.get(name);
+    if (value) headers[name] = value;
+  }
+
+  // Connect upstream first so a refused connection becomes a 502 instead of
+  // a socket that opens and immediately closes.
+  let upstream: WebSocket;
+  try {
+    upstream = await openUpstreamSocket(`ws://${hostPort(target)}${url.pathname}${url.search}`, protocols, headers);
+  } catch (err) {
+    error(`WebSocket ${label}${url.pathname} → ${hostPort(target)} failed: ${err instanceof Error ? err.message : err}`);
+    return errorResponse(req, {
+      status: 502,
+      title: "WebSocket upstream unavailable",
+      description: `Could not open a WebSocket to ${hostPort(target)}.`,
+    });
+  }
+
+  const data: WebSocketData = { upstream, pending: [], client: null, upstreamClosed: null };
+  upstream.onmessage = (event) => {
+    const message = event.data as string | ArrayBuffer;
+    if (data.client) data.client.send(message);
+    else data.pending.push(message);
+  };
+  upstream.onclose = (event) => {
+    const code = sendableCloseCode(event.code);
+    if (data.client) data.client.close(code, event.reason);
+    else data.upstreamClosed = { code, reason: event.reason };
+  };
+
+  // Bun echoes the first requested subprotocol in the handshake response.
+  if (srv.upgrade(req, { data })) {
+    info(`WS ${label}${url.pathname} → ${hostPort(target)}`);
+    return undefined;
+  }
+
+  upstream.close();
+  return errorResponse(req, {
+    status: 400,
+    title: "WebSocket upgrade failed",
+    description: "The request could not be upgraded to a WebSocket.",
+  });
+}
+
+function notRunningError(route: Route & { kind: "port" | "project" }, publicHost: string): ErrorInfo {
+  if (route.kind === "port") {
+    return {
+      status: 503,
+      title: "Nothing on that port",
+      description: `"${route.label}" points to port ${route.port}, but nothing is listening there right now.`,
+      details: [`Start the service on port ${route.port}. This page reloads when it is up.`],
+      waiting: true,
+    };
+  }
+  return {
+    status: 503,
+    title: "Dev server not running",
+    description: `LazyDev found ${route.path}, but nothing is listening for "${route.label}" right now.`,
+    details: [
+      `Start it with: cd ${route.path} && ${suggestDevCommand(route.path)}`,
+      `This page reloads when http://${publicHost} is up.`,
+      ...(discoveryWarning ? [discoveryWarning] : []),
+    ],
+    waiting: true,
+  };
+}
+
+async function handleRequest(req: Request, srv: Server<WebSocketData>): Promise<Response | undefined> {
+  const host = req.headers.get("host");
+  const parsed = parseHost(host);
+
+  if (parsed.kind === "dashboard") {
+    return dashboardResponse(req);
+  }
+  if (parsed.kind === "invalid") {
+    return errorResponse(req, {
+      status: 400,
+      title: "Unknown host",
+      description: parsed.reason,
+      details: ["Use http://<project>.localhost"],
+    });
+  }
+
+  const publicHost = host ?? `${parsed.name}.localhost`;
+  const route = resolveRoute(projectsDirs, config.aliases, parsed.name);
+
+  if (route.kind === "missing") {
+    return errorResponse(req, {
+      status: 404,
+      title: "Project not found",
+      description: `LazyDev could not find a local project directory for "${route.target}".`,
+      details: [
+        ...projectsDirs.map((dir) => `Expected directory: ${dir}/${route.target}`),
+        "Check the project name, or map it with `lazydev alias <name> <project-or-port>`.",
+      ],
+    });
+  }
+  if (route.kind === "port" && route.port === ownPort()) {
+    return errorResponse(req, {
+      status: 508,
+      title: "Alias loops back to LazyDev",
+      description: `"${route.label}" points to port ${route.port}, which is LazyDev itself.`,
+    });
+  }
+
+  const lookup = (): Promise<Target | null> =>
+    route.kind === "port" ? findPortListener(route.port) : findListenerForProject(route.path);
+
+  let target = await lookup();
+  if (!target) {
+    // The cached scan may predate a server that just started.
+    invalidateListeners();
+    target = await lookup();
+  }
+  if (!target) {
+    return errorResponse(req, notRunningError(route, publicHost));
+  }
+
+  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    return upgradeWebSocket(req, srv, target, publicHost);
+  }
+
+  const started = performance.now();
+  const clientIp = srv.requestIP(req)?.address;
+  const url = new URL(req.url);
+  const log = (status: number | string, to: Target) =>
+    info(`${req.method} ${publicHost}${url.pathname} → ${hostPort(to)} ${status} ${Math.round(performance.now() - started)}ms`);
+
+  try {
+    const response = await forwardRequest(req, target, publicHost, clientIp);
+    log(response.status, target);
+    return response;
+  } catch (err) {
+    if (req.signal.aborted) {
+      return new Response(null, { status: 499 });
+    }
+
+    // The dev server may have restarted on another port. Retry once with a
+    // fresh scan if the request body has not been consumed.
+    if (isConnectionError(err) && !req.bodyUsed) {
+      invalidateListeners();
+      const fresh = await lookup();
+      if (fresh && (fresh.port !== target.port || fresh.host !== target.host)) {
+        try {
+          const response = await forwardRequest(req, fresh, publicHost, clientIp);
+          log(response.status, fresh);
+          return response;
+        } catch (retryErr) {
+          err = retryErr;
+        }
+      }
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    log(`failed: ${message}`, target);
+    return errorResponse(req, {
+      status: 502,
+      title: "Dev server not responding",
+      description: `LazyDev could not reach the dev server for "${route.label}" at ${hostPort(target)}.`,
+      details: [message, "If the server is restarting, this page reloads when it is back."],
+      waiting: req.method === "GET",
+    });
   }
 }
 
-export function getServer(): Server<WebSocketData> | null {
-  return server;
+function listen(hostname: string, port: number): Server<WebSocketData> {
+  return serve<WebSocketData>({
+    port,
+    hostname,
+    idleTimeout: 255,
+
+    fetch: handleRequest,
+
+    error(err) {
+      error(`Unhandled proxy error: ${err.stack ?? err.message}`);
+      return new Response("LazyDev internal error\n", { status: 500 });
+    },
+
+    websocket: {
+      open(ws) {
+        const data = ws.data;
+        data.client = ws;
+        for (const message of data.pending) {
+          ws.send(message);
+        }
+        data.pending = [];
+        if (data.upstreamClosed) {
+          ws.close(data.upstreamClosed.code, data.upstreamClosed.reason);
+        }
+      },
+
+      message(ws, message) {
+        const upstream = ws.data.upstream;
+        if (upstream.readyState === WebSocket.OPEN) {
+          upstream.send(message);
+        }
+      },
+
+      close(ws, code, reason) {
+        const upstream = ws.data.upstream;
+        if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) {
+          upstream.close(sendableCloseCode(code), reason);
+        }
+      },
+    },
+  });
+}
+
+/**
+ * Listen on IPv4 and IPv6 loopback. *.localhost often resolves to ::1 first,
+ * and not every client falls back to 127.0.0.1. Only the first address is
+ * required; the others are skipped if they cannot be bound.
+ */
+export async function startProxy(cfg: Config, hostnames: string[] = ["127.0.0.1", "::1"]): Promise<Server<WebSocketData>> {
+  setConfig(cfg);
+
+  const [first = "127.0.0.1", ...rest] = hostnames;
+  const primary = listen(first, cfg.settings.proxy_port);
+  servers = [primary];
+
+  for (const hostname of rest) {
+    try {
+      servers.push(listen(hostname, primary.port ?? cfg.settings.proxy_port));
+    } catch (err) {
+      info(`Not listening on ${hostname}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  return primary;
+}
+
+export function stopProxy(): void {
+  for (const server of servers) {
+    server.stop(true);
+  }
+  servers = [];
 }

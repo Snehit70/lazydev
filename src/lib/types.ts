@@ -1,34 +1,19 @@
-export interface RawConfig {
-  settings?: Record<string, unknown>;
-  projects?: Record<string, unknown>;
-  aliases?: Record<string, string>;
-}
-
-export interface ProjectConfig {
-  name: string;
-  port: number;
-  disabled?: boolean;
-  aliases?: string[];
-}
-
-export interface RawProjectConfig {
-  name?: string;
-  port: number;
-  disabled?: boolean;
-  aliases?: string[];
-}
-
 export interface Settings {
   proxy_port: number;
-  projects_dir?: string;
+  /** One directory or a list; on a name clash the earlier directory wins. */
+  projects_dir?: string | string[];
 }
+
+/** A project path relative to a projects directory, or a fixed local port. */
+export type AliasTarget = string | number;
 
 export interface Config {
   settings: Settings;
-  projects: Record<string, ProjectConfig>;
-  aliases?: Record<string, string>;
+  aliases: Record<string, AliasTarget>;
 }
 
-export const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Readonly<Settings> = {
   proxy_port: 80,
 };
+
+export const DEFAULT_PROJECTS_DIR = "~/projects";

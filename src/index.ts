@@ -1,24 +1,34 @@
 #!/usr/bin/env bun
 import { parseArgs } from "util";
+import pkg from "../package.json";
 
-const args = parseArgs({
-  args: Bun.argv.slice(2),
-  options: {
-    help: { type: "boolean", short: "h" },
-    version: { type: "boolean", short: "v" },
-    json: { type: "boolean", short: "j" },
-    follow: { type: "boolean", short: "f" },
-    lines: { type: "string", short: "l" },
-    shell: { type: "string" },
-  },
-  allowPositionals: true,
-});
+function parseCliArgs() {
+  try {
+    return parseArgs({
+      args: Bun.argv.slice(2),
+      options: {
+        help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
+        follow: { type: "boolean", short: "f" },
+        lines: { type: "string", short: "l" },
+        shell: { type: "string" },
+      },
+      allowPositionals: true,
+    });
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    console.error("Run 'lazydev --help' for usage.");
+    process.exit(1);
+  }
+}
+
+const args = parseCliArgs();
 
 const [command, ...positionals] = args.positionals;
 
 async function run() {
   if (args.values.version) {
-    console.log("lazydev v0.4.0");
+    console.log(`lazydev v${pkg.version}`);
     return;
   }
   
@@ -33,7 +43,7 @@ async function run() {
       break;
     case "add":
     case "remove":
-      console.log(`\n⚠️  The '${command}' command has been removed in v2.\n`);
+      console.log(`\n⚠️  The '${command}' command has been removed in v0.3.0.\n`);
       console.log("LazyDev now automatically discovers your running dev servers.");
       console.log("Just start your dev server and visit http://<project>.localhost\n");
       console.log("Example:");
@@ -41,9 +51,6 @@ async function run() {
       console.log("  bun dev");
       console.log("  # Visit http://myapp.localhost\n");
       process.exit(0);
-      break;
-    case "list":
-      await import("./cli/list").then((m) => m.run(args.values.json));
       break;
     case "start":
       await import("./cli/start").then((m) => m.run());
@@ -61,13 +68,13 @@ async function run() {
       await import("./cli/unalias").then((m) => m.run(positionals[0]));
       break;
     case "status":
+    case "list":
       await import("./cli/status").then((m) => m.run(positionals[0]));
       break;
     case "logs":
       await import("./cli/logs").then((m) => m.run(
-        positionals[0],
         args.values.follow,
-        args.values.lines ? Math.max(1, parseInt(args.values.lines) || 100) : 100
+        args.values.lines ? Math.max(1, parseInt(args.values.lines, 10) || 100) : 100
       ));
       break;
     case "completions":
@@ -75,6 +82,19 @@ async function run() {
       break;
     case "run":
       await import("./cli/start").then((m) => m.run(true));
+      break;
+    case "doctor":
+      await import("./cli/doctor").then((m) => m.run());
+      break;
+    case "open":
+      await import("./cli/open").then((m) => m.run(positionals[0]));
+      break;
+    case "url":
+      await import("./cli/open").then((m) => m.printUrl(positionals[0]));
+      break;
+    case "_names":
+      // Used by shell completions.
+      await import("./cli/completions").then((m) => m.printNames());
       break;
     default:
       console.error(`Unknown command: ${command}`);
@@ -90,15 +110,19 @@ lazydev - Zero-config dev server proxy
 Usage: lazydev <command> [options]
 
 Commands:
-  init              Initialize lazydev (setup dnsmasq, port 80)
-  start             Start the proxy daemon
-  stop              Stop the proxy daemon
-  restart           Restart the proxy daemon
-  alias <a> <p>     Add alias <a> for project <p>
+  init              Create config and check DNS / port setup
+  start             Start the proxy (systemd user service if available)
+  stop              Stop the proxy
+  restart           Restart the proxy service
+  run               Run the proxy in the foreground
+  status [name]     Show running dev servers (alias: list)
+  open [name]       Open a project in the browser (default: current directory)
+  url [name]        Print a project's URL
+  alias <a> <t>     Route <a>.localhost to project path or port <t>
   unalias <a>       Remove alias <a>
-  status [name]     Show running dev servers
-  logs              Show daemon logs
-  completions       Install shell completions
+  logs              Show proxy logs
+  doctor            Check the setup and explain why a server isn't found
+  completions       Install shell completions (--shell bash|zsh|fish)
 
 Options:
   -h, --help        Show this help
@@ -111,8 +135,13 @@ How it works:
   2. Start your dev server:  cd ~/projects/myapp && bun dev
   3. Visit:  http://myapp.localhost
 
-LazyDev automatically discovers running dev servers in ~/projects/
-and routes <name>.localhost to the correct port. No config needed!
+LazyDev discovers dev servers started inside ~/projects/<name> and
+routes <name>.localhost to them. Visit http://localhost for a list.
+
+Aliases:
+  lazydev alias mp myproject          mp.localhost → ~/projects/myproject
+  lazydev alias web monorepo/apps/web nested paths work
+  lazydev alias grafana 3000          any local port, e.g. a Docker container
 `);
 }
 
