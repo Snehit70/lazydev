@@ -1,7 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { stringify, parse } from "yaml";
-import { CONFIG_PATH, expandTilde } from "../lib/config";
-import type { RawConfig } from "../lib/types";
+import { isMap } from "yaml";
+import { loadConfig, updateConfigFile } from "../lib/config";
 
 export async function run(alias?: string) {
   if (!alias) {
@@ -10,26 +8,24 @@ export async function run(alias?: string) {
   }
 
   const aliasName = alias.toLowerCase();
-  const configPath = expandTilde(CONFIG_PATH);
-  if (!existsSync(configPath)) {
-    console.error("Config not found. Run 'lazydev init' first.");
-    process.exit(1);
-  }
-
-  const config = parse(readFileSync(configPath, "utf-8")) as RawConfig | null;
-  const nextConfig: RawConfig = config ?? {};
-
-  if (!nextConfig.aliases?.[aliasName]) {
+  if (!(aliasName in loadConfig().aliases)) {
     console.error(`Alias "${aliasName}" not found.`);
     process.exit(1);
   }
 
-  delete nextConfig.aliases[aliasName];
-  if (Object.keys(nextConfig.aliases).length === 0) {
-    delete nextConfig.aliases;
-  }
-
-  writeFileSync(configPath, stringify(nextConfig));
+  updateConfigFile((doc) => {
+    const aliases = doc.get("aliases");
+    if (!isMap(aliases)) return;
+    // Keys may have been written with different casing.
+    for (const item of [...aliases.items]) {
+      if (String((item.key as { value?: unknown })?.value ?? item.key).toLowerCase() === aliasName) {
+        aliases.delete(item.key);
+      }
+    }
+    if (aliases.items.length === 0) {
+      doc.delete("aliases");
+    }
+  });
 
   console.log(`✓ Removed alias: ${aliasName}`);
 }

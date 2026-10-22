@@ -1,6 +1,6 @@
 import { readLogs, getLogFilePath, tailLogs } from "../lib/logger";
 
-export async function run(_name?: string, follow: boolean = false, lines: number = 100) {
+export async function run(follow: boolean = false, lines: number = 100) {
   const logFile = getLogFilePath();
   
   if (follow) {

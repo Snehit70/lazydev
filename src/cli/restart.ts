@@ -3,7 +3,7 @@ import { restartService, isSystemdAvailable } from "../lib/systemd";
 export async function run() {
   if (!isSystemdAvailable()) {
     console.error("Error: systemd is not available on this system.");
-    console.error("Run 'lazydev start --foreground' to start the daemon directly.");
+    console.error("Run 'lazydev run' to start the proxy in the foreground.");
     process.exit(1);
   }
   

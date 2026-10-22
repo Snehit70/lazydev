@@ -1,4 +1,22 @@
+import { loadConfig, resolveProjectsDirs } from "../lib/config";
 import { installCompletions, getShell } from "../lib/completions";
+import { parseHost } from "../lib/routing";
+import { listProjects } from "./status";
+
+/** Project and alias names, one per line, for shell completion. Silent on errors. */
+export async function printNames() {
+  try {
+    const config = loadConfig();
+    const names = new Set(Object.keys(config.aliases));
+    for (const { name } of listProjects(resolveProjectsDirs(config))) {
+      const parsed = parseHost(`${name.toLowerCase()}.localhost`);
+      if (parsed.kind === "project") names.add(parsed.name);
+    }
+    console.log([...names].sort().join("\n"));
+  } catch {
+    // No config yet: nothing to complete.
+  }
+}
 
 export async function run(shell?: string) {
   if (shell) {

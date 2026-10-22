@@ -1,57 +1,32 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { execSync } from "child_process";
-import { homedir } from "os";
 import { stopService, isSystemdAvailable, getServiceStatus } from "../lib/systemd";
-
-const PID_FILE = `${homedir()}/.local/share/lazydev/proxy.pid`;
+import { getForegroundPid } from "../lib/pidfile";
 
 export async function run() {
   // Try systemd first
   if (isSystemdAvailable()) {
     const status = getServiceStatus();
-    
+
     if (status.active) {
       const result = await stopService();
-      console.log(result.message);
+      console.log(result.success ? `✓ ${result.message}` : result.message);
+      if (!result.success) process.exit(1);
       return;
     }
   }
-  
-  // Fall back to PID file
-  const pidStr = existsSync(PID_FILE) ? readFileSync(PID_FILE, "utf-8").trim() : null;
-  
-  if (pidStr) {
-    const pid = parseInt(pidStr);
+
+  // Fall back to a foreground proxy started with `lazydev run`
+  const pid = getForegroundPid();
+  if (pid) {
     try {
       process.kill(pid, "SIGTERM");
-      console.log(`✓ Sent SIGTERM to proxy process (PID: ${pid})`);
-      unlinkSync(PID_FILE);
+      console.log(`✓ Stopped proxy process (PID: ${pid})`);
       return;
-    } catch {
-      // Process not found, remove stale PID file
-      try { unlinkSync(PID_FILE); } catch { /* ignore */ }
+    } catch (err) {
+      console.error(`Failed to stop proxy process ${pid}: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
     }
   }
-  
-  // Fallback: try to find process on port 80
-  try {
-    const output = execSync("lsof -ti:80 -t 2>/dev/null || true", { encoding: "utf-8" }).trim();
-    if (output) {
-      const pids = output.split("\n").filter(Boolean);
-      for (const p of pids) {
-        try {
-          process.kill(parseInt(p), "SIGTERM");
-          console.log(`✓ Stopped process on port 80 (PID: ${p})`);
-        } catch {
-          // Ignore
-        }
-      }
-      if (pids.length > 0) return;
-    }
-  } catch {
-    // lsof not available
-  }
-  
+
   console.log("No proxy process found. Is LazyDev running?");
   process.exit(1);
 }
