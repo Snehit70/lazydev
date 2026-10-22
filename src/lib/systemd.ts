@@ -9,7 +9,7 @@ const SERVICE_DIR = join(homedir(), ".config", "systemd", "user");
 const SERVICE_FILE_PATH = join(SERVICE_DIR, `${SERVICE_NAME}.service`);
 
 const __filename = fileURLToPath(import.meta.url);
-const LAZYDEV_ROOT = dirname(dirname(__filename));
+const LAZYDEV_ROOT = dirname(dirname(dirname(__filename)));
 
 function runSystemctl(command: string): string {
   return execSync(`systemctl --user ${command}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -18,7 +18,7 @@ function runSystemctl(command: string): string {
 function getServiceFile(): string {
   const scriptPath = join(LAZYDEV_ROOT, "src", "index.ts");
   const home = homedir();
-  const bunBinDir = join(home, ".bun", "bin");
+  const configOverride = process.env["LAZYDEV_CONFIG"];
   
   return `[Unit]
 Description=LazyDev - Zero-config dev server proxy
@@ -27,12 +27,11 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${home}
-ExecStart=/usr/bin/env bash -lc 'export HOME=${home}; export PATH=${bunBinDir}:$PATH; exec bun ${scriptPath} run'
-Restart=always
-RestartSec=5
+ExecStart="${process.execPath}" "${scriptPath}" run
+Restart=on-failure
+RestartSec=2
 Environment=HOME=${home}
-Environment=PATH=${bunBinDir}:/usr/local/bin:/usr/bin:/bin
-
+${configOverride ? `Environment=LAZYDEV_CONFIG=${configOverride}\n` : ""}
 [Install]
 WantedBy=default.target
 `;
@@ -160,6 +159,11 @@ export async function restartService(): Promise<{ success: boolean; message: str
   }
   
   try {
+    // Pick up service file changes from an upgraded lazydev
+    const ensured = await ensureService();
+    if (!ensured.success) {
+      return { success: false, message: ensured.message };
+    }
     runSystemctl(`restart ${SERVICE_NAME}`);
     if (await waitForServiceState(true)) {
       return { success: true, message: "Service restarted" };
@@ -168,11 +172,4 @@ export async function restartService(): Promise<{ success: boolean; message: str
   } catch (err) {
     return { success: false, message: `Failed to restart service: ${err}` };
   }
-}
-
-export async function runService(): Promise<void> {
-  // This is called when the service starts
-  // It runs the actual proxy
-  const { run } = await import("../cli/start");
-  await run(true);
 }
